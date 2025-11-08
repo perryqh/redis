@@ -1,9 +1,11 @@
 #![allow(unused_imports)]
+use anyhow::Result;
 use std::net::TcpListener;
 
-fn main() {
-    let listener = TcpListener::bind("127.0.0.1:6379").unwrap();
-    
+#[tokio::main]
+async fn main() -> Result<()> {
+    let listener = TcpListener::bind("127.0.0.1:6379")?;
+
     for stream in listener.incoming() {
         match stream {
             Ok(_stream) => {
@@ -14,4 +16,6 @@ fn main() {
             }
         }
     }
+
+    Ok(())
 }
