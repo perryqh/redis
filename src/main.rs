@@ -12,7 +12,7 @@ async fn main() -> Result<()> {
                 println!("accepted new connection");
             }
             Err(e) => {
-                println!("error: {}", e);
+                println!("error: {e}");
             }
         }
     }
