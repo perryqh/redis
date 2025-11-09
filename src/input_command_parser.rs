@@ -5,6 +5,42 @@ use anyhow::Result;
 use crate::commands::{PingCommand, RedisCommand};
 use crate::datatypes::{Array, BulkString, Integer, RedisDataType, SimpleError, SimpleString};
 
+/// Parse a Redis data type from the cursor
+pub fn parse_data_type(cursor: &mut Cursor<&[u8]>) -> Result<Option<Box<dyn RedisDataType>>> {
+    let mut byte = [0u8; 1];
+
+    // Try to read the first byte
+    if cursor.read_exact(&mut byte).is_err() {
+        return Ok(None);
+    }
+
+    match byte[0] {
+        b'*' => parse_array(cursor),
+        b'$' => parse_bulk_string(cursor),
+        b'+' => parse_simple_string(cursor),
+        b':' => parse_integer(cursor),
+        b'-' => parse_error(cursor),
+        _ => Ok(None),
+    }
+}
+
+pub fn parse_command(cursor: &mut Cursor<&[u8]>) -> Result<Option<Box<dyn RedisCommand>>> {
+    // Parse the data type
+    if let Some(data_type) = parse_data_type(cursor)? {
+        // Check if it's an Array with a PING command
+        if let Some(array) = data_type.as_any().downcast_ref::<Array>() {
+            if array.values.len() == 1 {
+                if let Some(bulk_string) = array.values[0].as_any().downcast_ref::<BulkString>() {
+                    if bulk_string.value.to_uppercase() == "PING" {
+                        return Ok(Some(Box::new(PingCommand {})));
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(None)
+}
 /// Helper function to convert a byte to its ASCII character representation
 ///
 /// Examples:
@@ -189,64 +225,9 @@ fn parse_error(cursor: &mut Cursor<&[u8]>) -> Result<Option<Box<dyn RedisDataTyp
     })))
 }
 
-/// Parse a Redis data type from the cursor
-pub fn parse_data_type(cursor: &mut Cursor<&[u8]>) -> Result<Option<Box<dyn RedisDataType>>> {
-    let mut byte = [0u8; 1];
-
-    // Try to read the first byte
-    if cursor.read_exact(&mut byte).is_err() {
-        return Ok(None);
-    }
-
-    match byte[0] {
-        b'*' => parse_array(cursor),
-        b'$' => parse_bulk_string(cursor),
-        b'+' => parse_simple_string(cursor),
-        b':' => parse_integer(cursor),
-        b'-' => parse_error(cursor),
-        _ => Ok(None),
-    }
-}
-
-pub fn parse_command(cursor: &mut Cursor<&[u8]>) -> Result<Option<Box<dyn RedisCommand>>> {
-    // Parse the data type
-    if let Some(data_type) = parse_data_type(cursor)? {
-        // Check if it's an Array with a PING command
-        if let Some(array) = data_type.as_any().downcast_ref::<Array>() {
-            match array.values[0] {
-                Some(value) => {
-                    if let Some(bulk_string) = value.as_any().downcast_ref::<BulkString>() {
-                        if bulk_string.value == "PING" {
-                            return Ok(Some(Box::new(PingCommand {})));
-                        }
-                    }
-                }
-                None => {}
-            }
-        }
-    }
-    Ok(None)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_parse_simple_string_ping() -> Result<()> {
-        // Test parsing a PING command sent as a SimpleString
-        let data = b"+PING\r\n";
-        let mut cursor = Cursor::new(data.as_ref());
-
-        let command = parse_command(&mut cursor)?;
-        assert!(command.is_some());
-
-        // Verify the command returns the expected PONG response
-        let response = command.unwrap().response()?;
-        assert_eq!(response, b"+PONG\r\n");
-
-        Ok(())
-    }
 
     #[test]
     fn test_parse_array_with_bulk_string_ping() -> Result<()> {
@@ -298,6 +279,38 @@ mod tests {
 
         let command = parse_command(&mut cursor)?;
         assert!(command.is_none());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_simple_string_ping_not_accepted() -> Result<()> {
+        // Test that SimpleString PING is NOT accepted as a command
+        // Commands must be sent as arrays with bulk strings
+        let data = b"+PING\r\n";
+        let mut cursor = Cursor::new(data.as_ref());
+
+        let command = parse_command(&mut cursor)?;
+        assert!(
+            command.is_none(),
+            "SimpleString PING should not be accepted as a command"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_bulk_string_ping_not_accepted() -> Result<()> {
+        // Test that BulkString PING alone is NOT accepted as a command
+        // Commands must be sent as arrays
+        let data = b"$4\r\nPING\r\n";
+        let mut cursor = Cursor::new(data.as_ref());
+
+        let command = parse_command(&mut cursor)?;
+        assert!(
+            command.is_none(),
+            "BulkString PING alone should not be accepted as a command"
+        );
 
         Ok(())
     }

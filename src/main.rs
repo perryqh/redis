@@ -64,13 +64,16 @@ mod tests {
     use std::io::Cursor;
     use tokio::io::AsyncReadExt;
 
+    fn ping_command() -> Vec<u8> {
+        b"*1\r\n$4\r\nPING\r\n".to_vec()
+    }
+
     #[tokio::test]
     async fn test_handle_connection_impl_sends_pong() -> Result<()> {
         // Use in-memory buffers for testing
         let mut writer = Vec::new();
 
-        // Write PING command to the reader
-        let reader = Cursor::new(b"+PING\r\n".to_vec());
+        let reader = Cursor::new(ping_command());
 
         // Call the generic handler
         handle_connection_impl(reader, &mut writer).await?;
@@ -82,8 +85,7 @@ mod tests {
     }
     // write a test that sends multiple PINGs and expects corresponding PONGs
 
-    #[tokio::test]
-    async fn test_handle_connection_with_real_socket() -> Result<()> {
+    async fn test_handle_connection_commands(send: &[u8], expected_response: &[u8]) -> Result<()> {
         // Create a pair of connected sockets for testing
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let addr = listener.local_addr()?;
@@ -99,7 +101,7 @@ mod tests {
         use tokio::io::AsyncWriteExt;
 
         // Send a PING command to the server
-        client.write_all(b"+PING\r\n").await?;
+        client.write_all(send).await?;
         client.flush().await?;
 
         // Read the response from the server
@@ -108,7 +110,7 @@ mod tests {
         buffer.truncate(n);
 
         // Verify we received the expected PONG response
-        assert_eq!(&buffer, b"+PONG\r\n");
+        assert_eq!(&buffer, &expected_response);
 
         // Shutdown the connection to signal no more data
         client.shutdown().await?;
@@ -120,21 +122,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_handle_connection_with_real_socket() -> Result<()> {
+        test_handle_connection_commands(&ping_command(), b"+PONG\r\n").await?;
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_multiple_writers() -> Result<()> {
         // Test with multiple different writer types to ensure generics work
-        let reader1 = Cursor::new(b"+PING\r\n".to_vec());
+        let reader1 = Cursor::new(ping_command());
         let mut buffer1 = Vec::new();
         handle_connection_impl(reader1, &mut buffer1).await?;
         assert_eq!(buffer1, b"+PONG\r\n");
 
         // Test with a cursor as writer
-        let reader2 = Cursor::new(b"+PING\r\n".to_vec());
+        let reader2 = Cursor::new(b"*1\r\n$4\r\nPING\r\n".to_vec());
         let mut cursor_writer = Cursor::new(Vec::new());
         handle_connection_impl(reader2, &mut cursor_writer).await?;
         assert_eq!(cursor_writer.into_inner(), b"+PONG\r\n");
 
         Ok(())
     }
-
-    // *1\r\n$4\r\nPING\r\n
 }
