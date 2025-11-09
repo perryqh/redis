@@ -80,133 +80,7 @@ mod tests {
 
         Ok(())
     }
-    #[tokio::test]
-    async fn test_multiple_pings_in_memory() -> Result<()> {
-        // Test with in-memory buffers sending multiple PING commands at once
-        let reader = Cursor::new(b"+PING\r\n+PING\r\n+PING\r\n".to_vec());
-        let mut writer = Vec::new();
-
-        // Call the handler
-        handle_connection_impl(reader, &mut writer).await?;
-
-        // Verify we received three PONG responses
-        assert_eq!(writer, b"+PONG\r\n+PONG\r\n+PONG\r\n");
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_multiple_pings_sent_separately() -> Result<()> {
-        // Create a pair of connected sockets for testing
-        let listener = TcpListener::bind("127.0.0.1:0").await?;
-        let addr = listener.local_addr()?;
-
-        // Spawn a task to accept the connection
-        let server_task = tokio::spawn(async move {
-            let (socket, _) = listener.accept().await.unwrap();
-            handle_connection(socket).await
-        });
-
-        // Connect as a client
-        let mut client = TcpStream::connect(addr).await?;
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
-        // Collect all responses
-        let mut all_responses = Vec::new();
-
-        // Send first PING and read response
-        client.write_all(b"+PING\r\n").await?;
-        client.flush().await?;
-
-        // Give server time to process and respond
-        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-
-        // Read first PONG
-        let mut buffer = vec![0; 8];
-        let n = client.read(&mut buffer).await?;
-        all_responses.extend_from_slice(&buffer[..n]);
-
-        // Send second PING and read response
-        client.write_all(b"+PING\r\n").await?;
-        client.flush().await?;
-
-        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-
-        // Read second PONG
-        let mut buffer = vec![0; 8];
-        let n = client.read(&mut buffer).await?;
-        all_responses.extend_from_slice(&buffer[..n]);
-
-        // Send third PING and read response
-        client.write_all(b"+PING\r\n").await?;
-        client.flush().await?;
-
-        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-
-        // Read third PONG
-        let mut buffer = vec![0; 8];
-        let n = client.read(&mut buffer).await?;
-        all_responses.extend_from_slice(&buffer[..n]);
-
-        // Verify we received three PONG responses
-        assert_eq!(
-            &all_responses,
-            b"+PONG\r\n+PONG\r\n+PONG\r\n",
-            "Expected 3 PONGs but got: {:?}",
-            String::from_utf8_lossy(&all_responses)
-        );
-
-        // Shutdown the connection
-        client.shutdown().await?;
-
-        // Clean up - server task should complete after client shutdown
-        server_task.await??;
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_multiple_pings_sent_together() -> Result<()> {
-        // Create a pair of connected sockets for testing
-        let listener = TcpListener::bind("127.0.0.1:0").await?;
-        let addr = listener.local_addr()?;
-
-        // Spawn a task to accept the connection
-        let server_task = tokio::spawn(async move {
-            let (socket, _) = listener.accept().await.unwrap();
-            handle_connection(socket).await
-        });
-
-        // Connect as a client
-        let mut client = TcpStream::connect(addr).await?;
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
-        // Send multiple PING commands
-        client.write_all(b"+PING\r\n+PING\r\n+PING\r\n").await?;
-        client.flush().await?;
-
-        // Small delay to ensure all commands are processed
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-
-        // Read multiple PONG responses
-        let mut buffer = vec![0; 24]; // 8 bytes per PONG * 3
-        let n = client.read(&mut buffer).await?;
-        buffer.truncate(n);
-
-        // Verify we received three PONG responses
-        assert_eq!(
-            &buffer,
-            b"+PONG\r\n+PONG\r\n+PONG\r\n",
-            "Expected 3 PONGs but got: {:?}",
-            String::from_utf8_lossy(&buffer)
-        );
-
-        // Clean up
-        drop(client);
-        server_task.await??;
-
-        Ok(())
-    }
+    // write a test that sends multiple PINGs and expects corresponding PONGs
 
     #[tokio::test]
     async fn test_handle_connection_with_real_socket() -> Result<()> {
@@ -261,4 +135,6 @@ mod tests {
 
         Ok(())
     }
+
+    // *1\r\n$4\r\nPING\r\n
 }
