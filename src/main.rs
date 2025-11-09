@@ -105,7 +105,7 @@ mod tests {
         client.flush().await?;
 
         // Read the response from the server
-        let mut buffer = vec![0; 8];
+        let mut buffer = vec![0; 1024];
         let n = client.read(&mut buffer).await?;
         buffer.truncate(n);
 
@@ -122,8 +122,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_handle_connection_with_real_socket() -> Result<()> {
+    async fn test_real_ping() -> Result<()> {
         test_handle_connection_commands(&ping_command(), b"+PONG\r\n").await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_real_echo() -> Result<()> {
+        test_handle_connection_commands(b"*2\r\n$4\r\nECHO\r\n$3\r\nhey\r\n", b"$3\r\nhey\r\n")
+            .await?;
         Ok(())
     }
 

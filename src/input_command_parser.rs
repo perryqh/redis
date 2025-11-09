@@ -2,7 +2,7 @@ use std::io::{Cursor, Read};
 
 use anyhow::Result;
 
-use crate::commands::{PingCommand, RedisCommand};
+use crate::commands::{EchoCommand, PingCommand, RedisCommand};
 use crate::datatypes::{Array, BulkString, Integer, RedisDataType, SimpleError, SimpleString};
 
 /// Parse a Redis data type from the cursor
@@ -27,12 +27,19 @@ pub fn parse_data_type(cursor: &mut Cursor<&[u8]>) -> Result<Option<Box<dyn Redi
 pub fn parse_command(cursor: &mut Cursor<&[u8]>) -> Result<Option<Box<dyn RedisCommand>>> {
     // Parse the data type
     if let Some(data_type) = parse_data_type(cursor)? {
-        // Check if it's an Array with a PING command
+        // Check if it's an Array with a command
         if let Some(array) = data_type.as_any().downcast_ref::<Array>() {
-            if array.values.len() == 1 {
+            if !array.values.is_empty() {
                 if let Some(bulk_string) = array.values[0].as_any().downcast_ref::<BulkString>() {
-                    if bulk_string.value.to_uppercase() == "PING" {
-                        return Ok(Some(Box::new(PingCommand {})));
+                    match bulk_string.value.to_uppercase().as_str() {
+                        "PING" if array.values.len() == 1 => {
+                            return Ok(Some(Box::new(PingCommand {})));
+                        }
+                        "ECHO" if array.values.len() >= 2 => {
+                            let echo_args = &array.values[1..];
+                            return Ok(Some(Box::new(EchoCommand::new(echo_args))));
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -230,16 +237,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_array_with_bulk_string_ping() -> Result<()> {
-        // Test parsing a PING command sent as an Array with BulkString
-        let data = b"*1\r\n$4\r\nPING\r\n";
+    fn test_parse_array_with_bulk_string_ping_lowercase() -> Result<()> {
+        // Test parsing a lowercase PING command sent as an Array with BulkString
+        let data = b"*1\r\n$4\r\nping\r\n";
         let mut cursor = Cursor::new(data.as_ref());
 
         // Parse as a command
         let command = parse_command(&mut cursor)?;
         assert!(
             command.is_some(),
-            "Expected to parse PING command from array"
+            "Expected to parse ping command from array"
         );
 
         // Verify the command returns the expected PONG response
@@ -251,7 +258,7 @@ mod tests {
         let data_type = parse_data_type(&mut cursor)?;
         assert!(data_type.is_some());
 
-        // Assert it's an Array with one BulkString of value "PING"
+        // Assert it's an Array with one BulkString of value "ping"
         let data_type = data_type.unwrap();
         let array = data_type
             .as_any()
@@ -264,8 +271,8 @@ mod tests {
             .downcast_ref::<BulkString>()
             .expect("Expected BulkString in array");
         assert_eq!(
-            bulk_string.value, "PING",
-            "Expected BulkString value to be 'PING'"
+            bulk_string.value, "ping",
+            "Expected BulkString value to be 'ping'"
         );
 
         Ok(())
@@ -316,42 +323,51 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_array_with_bulk_string_ping_lowercase() -> Result<()> {
-        // Test parsing a lowercase PING command sent as an Array with BulkString
-        let data = b"*1\r\n$4\r\nping\r\n";
+    fn test_echo_command() -> Result<()> {
+        // Test parsing an ECHO command sent as an Array with BulkString
+        let data = b"*2\r\n$4\r\nECHO\r\n$3\r\nhey\r\n";
         let mut cursor = Cursor::new(data.as_ref());
 
         // Parse as a command
         let command = parse_command(&mut cursor)?;
         assert!(
             command.is_some(),
-            "Expected to parse ping command from array"
+            "Expected to parse echo command from array"
         );
 
         // Verify the command returns the expected PONG response
         let response = command.unwrap().response()?;
-        assert_eq!(response, b"+PONG\r\n");
+        assert_eq!(response, b"$3\r\nhey\r\n");
 
         // Also test the data type parser directly
         let mut cursor = Cursor::new(data.as_ref());
         let data_type = parse_data_type(&mut cursor)?;
         assert!(data_type.is_some());
 
-        // Assert it's an Array with one BulkString of value "ping"
+        // Assert it's an Array with two BulkStrings: "ECHO" and "hey"
         let data_type = data_type.unwrap();
         let array = data_type
             .as_any()
             .downcast_ref::<Array>()
             .expect("Expected Array type");
-        assert_eq!(array.values.len(), 1, "Expected array with 1 element");
+        assert_eq!(array.values.len(), 2, "Expected array with 2 elements");
 
-        let bulk_string = array.values[0]
+        let echo_command = array.values[0]
             .as_any()
             .downcast_ref::<BulkString>()
-            .expect("Expected BulkString in array");
+            .expect("Expected BulkString for command");
         assert_eq!(
-            bulk_string.value, "ping",
-            "Expected BulkString value to be 'ping'"
+            echo_command.value, "ECHO",
+            "Expected first BulkString value to be 'ECHO'"
+        );
+
+        let echo_arg = array.values[1]
+            .as_any()
+            .downcast_ref::<BulkString>()
+            .expect("Expected BulkString for argument");
+        assert_eq!(
+            echo_arg.value, "hey",
+            "Expected second BulkString value to be 'hey'"
         );
 
         Ok(())
