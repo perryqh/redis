@@ -24,6 +24,16 @@ pub struct SimpleError {
     pub value: String,
 }
 
+impl RedisDataType for SimpleError {
+    fn to_bytes(&self) -> Result<Vec<u8>> {
+        Ok(format!("-{}\r\n", self.value).into_bytes())
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
 // *<number-of-elements>\r\n<element-1>...<element-n>
 // *0\r\n   empty array
 // *2\r\n$5\r\nhello\r\n$5\r\nworld\r\n
@@ -39,6 +49,16 @@ pub struct NullArray {}
 #[derive(Debug, PartialEq)]
 pub struct Integer {
     pub value: i32,
+}
+
+impl RedisDataType for Integer {
+    fn to_bytes(&self) -> Result<Vec<u8>> {
+        Ok(format!(":{}\r\n", self.value).into_bytes())
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 }
 
 // $<length>\r\n<data>\r\n

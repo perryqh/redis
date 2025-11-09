@@ -3,7 +3,7 @@ use std::io::{Cursor, Read};
 use anyhow::Result;
 
 use crate::commands::{PingCommand, RedisCommand};
-use crate::datatypes::{Array, BulkString, RedisDataType, SimpleString};
+use crate::datatypes::{Array, BulkString, Integer, RedisDataType, SimpleError, SimpleString};
 
 /// Helper function to convert a byte to its ASCII character representation
 ///
@@ -35,6 +35,160 @@ fn byte_to_ascii(byte: u8) -> char {
 ///    if byte.is_ascii_alphabetic() { ... }
 ///    if byte.is_ascii_digit() { ... }
 ///
+/// Parse an array from the cursor
+/// Format: *<count>\r\n<element1><element2>...<elementN>
+fn parse_array(cursor: &mut Cursor<&[u8]>) -> Result<Option<Box<dyn RedisDataType>>> {
+    let mut byte = [0u8; 1];
+    let mut buffer = Vec::new();
+
+    // Read until \r\n to get the count
+    loop {
+        if cursor.read_exact(&mut byte).is_err() {
+            return Ok(None);
+        }
+
+        buffer.push(byte[0]);
+
+        if buffer.len() >= 2 && &buffer[buffer.len() - 2..] == b"\r\n" {
+            break;
+        }
+    }
+
+    // Parse the count
+    let count_str = std::str::from_utf8(&buffer[..buffer.len() - 2])?;
+    let count = count_str.parse::<usize>()?;
+
+    // Parse each element
+    let mut values = Vec::new();
+    for _ in 0..count {
+        if let Some(element) = parse_data_type(cursor)? {
+            values.push(element);
+        } else {
+            return Ok(None);
+        }
+    }
+
+    Ok(Some(Box::new(Array { values })))
+}
+
+/// Parse a bulk string from the cursor
+/// Format: $<length>\r\n<data>\r\n
+fn parse_bulk_string(cursor: &mut Cursor<&[u8]>) -> Result<Option<Box<dyn RedisDataType>>> {
+    let mut byte = [0u8; 1];
+    let mut buffer = Vec::new();
+
+    // Read until \r\n to get the length
+    loop {
+        if cursor.read_exact(&mut byte).is_err() {
+            return Ok(None);
+        }
+
+        buffer.push(byte[0]);
+
+        if buffer.len() >= 2 && &buffer[buffer.len() - 2..] == b"\r\n" {
+            break;
+        }
+    }
+
+    // Parse the length
+    let length_str = std::str::from_utf8(&buffer[..buffer.len() - 2])?;
+    let length = length_str.parse::<usize>()?;
+
+    // Read the data
+    let mut data = vec![0u8; length];
+    if cursor.read_exact(&mut data).is_err() {
+        return Ok(None);
+    }
+
+    // Skip the trailing \r\n
+    let mut crlf = [0u8; 2];
+    if cursor.read_exact(&mut crlf).is_err() {
+        return Ok(None);
+    }
+
+    let value = String::from_utf8(data)?;
+    Ok(Some(Box::new(BulkString::new(value))))
+}
+
+/// Parse a simple string from the cursor
+/// Format: +<data>\r\n
+fn parse_simple_string(cursor: &mut Cursor<&[u8]>) -> Result<Option<Box<dyn RedisDataType>>> {
+    let mut byte = [0u8; 1];
+    let mut buffer = Vec::new();
+    buffer.push(b'+');
+
+    loop {
+        if cursor.read_exact(&mut byte).is_err() {
+            return Ok(None);
+        }
+
+        buffer.push(byte[0]);
+
+        if buffer.len() >= 2 && &buffer[buffer.len() - 2..] == b"\r\n" {
+            break;
+        }
+    }
+
+    let string = String::from_utf8(buffer.to_vec())?;
+    let (_, value) = string.split_at(1);
+    let simple_string = SimpleString::new(value.trim_end_matches("\r\n").to_string());
+
+    Ok(Some(Box::new(simple_string)))
+}
+
+/// Parse an integer from the cursor
+/// Format: :<integer>\r\n
+fn parse_integer(cursor: &mut Cursor<&[u8]>) -> Result<Option<Box<dyn RedisDataType>>> {
+    let mut byte = [0u8; 1];
+    let mut buffer = Vec::new();
+
+    // Read until \r\n to get the integer value
+    loop {
+        if cursor.read_exact(&mut byte).is_err() {
+            return Ok(None);
+        }
+
+        buffer.push(byte[0]);
+
+        if buffer.len() >= 2 && &buffer[buffer.len() - 2..] == b"\r\n" {
+            break;
+        }
+    }
+
+    // Parse the integer value
+    let integer_str = std::str::from_utf8(&buffer[..buffer.len() - 2])?;
+    let value = integer_str.parse::<i32>()?;
+
+    Ok(Some(Box::new(Integer { value })))
+}
+
+/// Parse an error from the cursor
+/// Format: -<error message>\r\n
+fn parse_error(cursor: &mut Cursor<&[u8]>) -> Result<Option<Box<dyn RedisDataType>>> {
+    let mut byte = [0u8; 1];
+    let mut buffer = Vec::new();
+
+    // Read until \r\n to get the error message
+    loop {
+        if cursor.read_exact(&mut byte).is_err() {
+            return Ok(None);
+        }
+
+        buffer.push(byte[0]);
+
+        if buffer.len() >= 2 && &buffer[buffer.len() - 2..] == b"\r\n" {
+            break;
+        }
+    }
+
+    // Extract the error message (without the \r\n)
+    let error_str = std::str::from_utf8(&buffer[..buffer.len() - 2])?;
+
+    Ok(Some(Box::new(SimpleError {
+        value: error_str.to_string(),
+    })))
+}
+
 /// Parse a Redis data type from the cursor
 pub fn parse_data_type(cursor: &mut Cursor<&[u8]>) -> Result<Option<Box<dyn RedisDataType>>> {
     let mut byte = [0u8; 1];
@@ -45,98 +199,11 @@ pub fn parse_data_type(cursor: &mut Cursor<&[u8]>) -> Result<Option<Box<dyn Redi
     }
 
     match byte[0] {
-        b'*' => {
-            // Parse array
-            let mut buffer = Vec::new();
-
-            // Read until \r\n to get the count
-            loop {
-                if cursor.read_exact(&mut byte).is_err() {
-                    return Ok(None);
-                }
-
-                buffer.push(byte[0]);
-
-                if buffer.len() >= 2 && &buffer[buffer.len() - 2..] == b"\r\n" {
-                    break;
-                }
-            }
-
-            // Parse the count
-            let count_str = std::str::from_utf8(&buffer[..buffer.len() - 2])?;
-            let count = count_str.parse::<usize>()?;
-
-            // Parse each element
-            let mut values = Vec::new();
-            for _ in 0..count {
-                if let Some(element) = parse_data_type(cursor)? {
-                    values.push(element);
-                } else {
-                    return Ok(None);
-                }
-            }
-
-            Ok(Some(Box::new(Array { values })))
-        }
-        b'$' => {
-            // Parse bulk string
-            let mut buffer = Vec::new();
-
-            // Read until \r\n to get the length
-            loop {
-                if cursor.read_exact(&mut byte).is_err() {
-                    return Ok(None);
-                }
-
-                buffer.push(byte[0]);
-
-                if buffer.len() >= 2 && &buffer[buffer.len() - 2..] == b"\r\n" {
-                    break;
-                }
-            }
-
-            // Parse the length
-            let length_str = std::str::from_utf8(&buffer[..buffer.len() - 2])?;
-            let length = length_str.parse::<usize>()?;
-
-            // Read the data
-            let mut data = vec![0u8; length];
-            if cursor.read_exact(&mut data).is_err() {
-                return Ok(None);
-            }
-
-            // Skip the trailing \r\n
-            let mut crlf = [0u8; 2];
-            if cursor.read_exact(&mut crlf).is_err() {
-                return Ok(None);
-            }
-
-            let value = String::from_utf8(data)?;
-            Ok(Some(Box::new(BulkString::new(value))))
-        }
-        b'+' => {
-            // Parse simple string
-            let mut buffer = Vec::new();
-            buffer.push(b'+');
-
-            loop {
-                if cursor.read_exact(&mut byte).is_err() {
-                    return Ok(None);
-                }
-
-                buffer.push(byte[0]);
-
-                if buffer.len() >= 2 && &buffer[buffer.len() - 2..] == b"\r\n" {
-                    break;
-                }
-            }
-
-            let string = String::from_utf8(buffer.to_vec())?;
-            let (_, value) = string.split_at(1);
-            let simple_string = SimpleString::new(value.trim_end_matches("\r\n").to_string());
-
-            Ok(Some(Box::new(simple_string)))
-        }
+        b'*' => parse_array(cursor),
+        b'$' => parse_bulk_string(cursor),
+        b'+' => parse_simple_string(cursor),
+        b':' => parse_integer(cursor),
+        b'-' => parse_error(cursor),
         _ => Ok(None),
     }
 }
@@ -388,5 +455,126 @@ mod tests {
         assert_eq!(b'$', 36u8);
         assert_eq!(b':', 58u8);
         assert_eq!(b'-', 45u8);
+    }
+
+    #[test]
+    fn test_parse_integer() -> Result<()> {
+        // Test parsing a positive integer
+        let data = b":42\r\n";
+        let mut cursor = Cursor::new(data.as_ref());
+
+        let data_type = parse_data_type(&mut cursor)?;
+        assert!(data_type.is_some());
+
+        let data_type = data_type.unwrap();
+        let integer = data_type
+            .as_any()
+            .downcast_ref::<Integer>()
+            .expect("Expected Integer type");
+        assert_eq!(integer.value, 42);
+
+        // Test parsing a negative integer
+        let data = b":-123\r\n";
+        let mut cursor = Cursor::new(data.as_ref());
+
+        let data_type = parse_data_type(&mut cursor)?;
+        assert!(data_type.is_some());
+
+        let data_type = data_type.unwrap();
+        let integer = data_type
+            .as_any()
+            .downcast_ref::<Integer>()
+            .expect("Expected Integer type");
+        assert_eq!(integer.value, -123);
+
+        // Test parsing zero
+        let data = b":0\r\n";
+        let mut cursor = Cursor::new(data.as_ref());
+
+        let data_type = parse_data_type(&mut cursor)?;
+        assert!(data_type.is_some());
+
+        let data_type = data_type.unwrap();
+        let integer = data_type
+            .as_any()
+            .downcast_ref::<Integer>()
+            .expect("Expected Integer type");
+        assert_eq!(integer.value, 0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_error() -> Result<()> {
+        // Test parsing a simple error
+        let data = b"-Error message\r\n";
+        let mut cursor = Cursor::new(data.as_ref());
+
+        let data_type = parse_data_type(&mut cursor)?;
+        assert!(data_type.is_some());
+
+        let data_type = data_type.unwrap();
+        let error = data_type
+            .as_any()
+            .downcast_ref::<SimpleError>()
+            .expect("Expected SimpleError type");
+        assert_eq!(error.value, "Error message");
+
+        // Test parsing an error with special characters
+        let data = b"-ERR unknown command 'foobar'\r\n";
+        let mut cursor = Cursor::new(data.as_ref());
+
+        let data_type = parse_data_type(&mut cursor)?;
+        assert!(data_type.is_some());
+
+        let data_type = data_type.unwrap();
+        let error = data_type
+            .as_any()
+            .downcast_ref::<SimpleError>()
+            .expect("Expected SimpleError type");
+        assert_eq!(error.value, "ERR unknown command 'foobar'");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_array_with_mixed_types() -> Result<()> {
+        // Test parsing an array with different data types
+        // Array with: BulkString, Integer, SimpleString
+        let data = b"*3\r\n$5\r\nhello\r\n:42\r\n+OK\r\n";
+        let mut cursor = Cursor::new(data.as_ref());
+
+        let data_type = parse_data_type(&mut cursor)?;
+        assert!(data_type.is_some());
+
+        let data_type = data_type.unwrap();
+        let array = data_type
+            .as_any()
+            .downcast_ref::<Array>()
+            .expect("Expected Array type");
+        assert_eq!(array.values.len(), 3);
+
+        // Check first element is BulkString
+        let bulk_string = array.values[0]
+            .as_any()
+            .downcast_ref::<BulkString>()
+            .expect("Expected BulkString at index 0");
+        assert_eq!(bulk_string.value, "hello");
+
+        // Check second element is Integer
+        let integer = array.values[1]
+            .as_any()
+            .downcast_ref::<Integer>()
+            .expect("Expected Integer at index 1");
+        assert_eq!(integer.value, 42);
+
+        // Check third element is SimpleString
+        let simple_string = array.values[2]
+            .as_any()
+            .downcast_ref::<SimpleString>()
+            .expect("Expected SimpleString at index 2");
+        assert_eq!(simple_string.value, "OK");
+
+        Ok(())
     }
 }
