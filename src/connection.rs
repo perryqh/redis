@@ -219,4 +219,139 @@ mod tests {
 
         Ok(())
     }
+
+    #[tokio::test]
+    async fn test_set_with_ex_option() -> Result<()> {
+        let store = Store::new();
+
+        // SET key value EX 1 (expire in 1 second)
+        let reader = Cursor::new(
+            b"*5\r\n$3\r\nSET\r\n$6\r\ntestex\r\n$5\r\nvalue\r\n$2\r\nEX\r\n:1\r\n".to_vec(),
+        );
+        let mut writer = Vec::new();
+        handle_connection_impl(reader, &mut writer, &store).await?;
+        assert_eq!(writer, b"+OK\r\n");
+        assert_eq!(store.get("testex"), Some("value".to_string()));
+
+        // Wait for expiration
+        tokio::time::sleep(tokio::time::Duration::from_millis(1100)).await;
+        assert_eq!(store.get("testex"), None);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_set_with_px_option() -> Result<()> {
+        let store = Store::new();
+
+        // SET key value PX 500 (expire in 500 milliseconds)
+        let reader = Cursor::new(
+            b"*5\r\n$3\r\nSET\r\n$6\r\ntestpx\r\n$5\r\nvalue\r\n$2\r\nPX\r\n:500\r\n".to_vec(),
+        );
+        let mut writer = Vec::new();
+        handle_connection_impl(reader, &mut writer, &store).await?;
+        assert_eq!(writer, b"+OK\r\n");
+        assert_eq!(store.get("testpx"), Some("value".to_string()));
+
+        // Wait for expiration
+        tokio::time::sleep(tokio::time::Duration::from_millis(600)).await;
+        assert_eq!(store.get("testpx"), None);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_set_get_with_expiration_workflow() -> Result<()> {
+        let store = Store::new();
+
+        // SET with expiration
+        let set_reader = Cursor::new(
+            b"*5\r\n$3\r\nSET\r\n$7\r\nmykey99\r\n$7\r\nmyval99\r\n$2\r\nPX\r\n:200\r\n".to_vec(),
+        );
+        let mut set_writer = Vec::new();
+        handle_connection_impl(set_reader, &mut set_writer, &store).await?;
+        assert_eq!(set_writer, b"+OK\r\n");
+
+        // GET immediately - should exist
+        let get_reader1 = Cursor::new(b"*2\r\n$3\r\nGET\r\n$7\r\nmykey99\r\n".to_vec());
+        let mut get_writer1 = Vec::new();
+        handle_connection_impl(get_reader1, &mut get_writer1, &store).await?;
+        assert_eq!(get_writer1, b"$7\r\nmyval99\r\n");
+
+        // Wait for expiration
+        tokio::time::sleep(tokio::time::Duration::from_millis(250)).await;
+
+        // GET after expiration - should return null
+        let get_reader2 = Cursor::new(b"*2\r\n$3\r\nGET\r\n$7\r\nmykey99\r\n".to_vec());
+        let mut get_writer2 = Vec::new();
+        handle_connection_impl(get_reader2, &mut get_writer2, &store).await?;
+        assert_eq!(get_writer2, b"$-1\r\n");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_set_overwrites_expiration() -> Result<()> {
+        let store = Store::new();
+
+        // SET with short expiration
+        let set1_reader = Cursor::new(
+            b"*5\r\n$3\r\nSET\r\n$8\r\noverride\r\n$2\r\nv1\r\n$2\r\nPX\r\n:100\r\n".to_vec(),
+        );
+        let mut set1_writer = Vec::new();
+        handle_connection_impl(set1_reader, &mut set1_writer, &store).await?;
+        assert_eq!(set1_writer, b"+OK\r\n");
+
+        // Immediately SET without expiration
+        let set2_reader =
+            Cursor::new(b"*3\r\n$3\r\nSET\r\n$8\r\noverride\r\n$2\r\nv2\r\n".to_vec());
+        let mut set2_writer = Vec::new();
+        handle_connection_impl(set2_reader, &mut set2_writer, &store).await?;
+        assert_eq!(set2_writer, b"+OK\r\n");
+
+        // Wait past original expiration
+        tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
+
+        // GET should still return value (no expiration on second SET)
+        let get_reader = Cursor::new(b"*2\r\n$3\r\nGET\r\n$8\r\noverride\r\n".to_vec());
+        let mut get_writer = Vec::new();
+        handle_connection_impl(get_reader, &mut get_writer, &store).await?;
+        assert_eq!(get_writer, b"$2\r\nv2\r\n");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_multiple_keys_with_different_expirations() -> Result<()> {
+        let store = Store::new();
+
+        // SET key1 with long expiration
+        let reader1 = Cursor::new(
+            b"*5\r\n$3\r\nSET\r\n$4\r\nkey1\r\n$4\r\nval1\r\n$2\r\nPX\r\n:1000\r\n".to_vec(),
+        );
+        let mut writer1 = Vec::new();
+        handle_connection_impl(reader1, &mut writer1, &store).await?;
+
+        // SET key2 with short expiration
+        let reader2 = Cursor::new(
+            b"*5\r\n$3\r\nSET\r\n$4\r\nkey2\r\n$4\r\nval2\r\n$2\r\nPX\r\n:100\r\n".to_vec(),
+        );
+        let mut writer2 = Vec::new();
+        handle_connection_impl(reader2, &mut writer2, &store).await?;
+
+        // SET key3 without expiration
+        let reader3 = Cursor::new(b"*3\r\n$3\r\nSET\r\n$4\r\nkey3\r\n$4\r\nval3\r\n".to_vec());
+        let mut writer3 = Vec::new();
+        handle_connection_impl(reader3, &mut writer3, &store).await?;
+
+        // Wait for key2 to expire
+        tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
+
+        // Check all keys
+        assert_eq!(store.get("key1"), Some("val1".to_string())); // Still valid
+        assert_eq!(store.get("key2"), None); // Expired
+        assert_eq!(store.get("key3"), Some("val3".to_string())); // No expiration
+
+        Ok(())
+    }
 }

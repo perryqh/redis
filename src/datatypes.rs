@@ -61,6 +61,12 @@ pub struct Integer {
     pub value: i32,
 }
 
+impl Integer {
+    pub fn new(value: i32) -> Self {
+        Integer { value }
+    }
+}
+
 impl RedisDataType for Integer {
     fn to_bytes(&self) -> Result<Vec<u8>> {
         Ok(format!(":{}\r\n", self.value).into_bytes())
