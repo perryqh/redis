@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use crate::{
-    datatypes::{BulkString, Integer, NullBulkString, RedisDataType, SimpleString},
+    datatypes::{BulkString, NullBulkString, RedisDataType, SimpleString},
     store::Store,
 };
 use anyhow::{bail, Context, Result};
@@ -19,21 +19,6 @@ fn extract_bulk_string(
         .downcast_ref::<BulkString>()
         .map(|bs| bs.value.clone())
         .context(format!("Expected bulk string for {}", field_name))
-}
-
-/// Helper function to extract an Integer value from an input array at the specified index
-fn extract_integer(
-    input_array: &[Box<dyn RedisDataType>],
-    index: usize,
-    field_name: &str,
-) -> Result<i32> {
-    input_array
-        .get(index)
-        .context(format!("Expected {}", field_name))?
-        .as_any()
-        .downcast_ref::<Integer>()
-        .map(|int| int.value)
-        .context(format!("Expected integer for {}", field_name))
 }
 
 pub trait RedisCommand: Send {
@@ -93,8 +78,12 @@ impl SetCommand {
         // Extract the option name (EX or PX)
         let option_name = extract_bulk_string(input_array, 2, "TTL option")?.to_uppercase();
 
-        // Extract the TTL value
-        let ttl_value = extract_integer(input_array, 3, "TTL value")?;
+        // Extract the TTL value as a string and parse it
+        let ttl_string = extract_bulk_string(input_array, 3, "TTL value")?;
+        let ttl_value = ttl_string.parse::<i64>().context(format!(
+            "Invalid TTL value: '{}'. Expected a positive integer",
+            ttl_string
+        ))?;
 
         // Validate TTL value is positive
         if ttl_value <= 0 {
@@ -210,7 +199,7 @@ mod tests {
         let key: Box<dyn RedisDataType> = Box::new(BulkString::new("tempkey".to_string()));
         let value: Box<dyn RedisDataType> = Box::new(BulkString::new("tempvalue".to_string()));
         let option: Box<dyn RedisDataType> = Box::new(BulkString::new("EX".to_string()));
-        let ttl: Box<dyn RedisDataType> = Box::new(Integer::new(1)); // 1 second
+        let ttl: Box<dyn RedisDataType> = Box::new(BulkString::new("1".to_string())); // 1 second
 
         let command = SetCommand::new(&[key, value, option, ttl]).unwrap();
         let response = command.execute(&store).unwrap();
@@ -229,7 +218,7 @@ mod tests {
         let key: Box<dyn RedisDataType> = Box::new(BulkString::new("tempkey2".to_string()));
         let value: Box<dyn RedisDataType> = Box::new(BulkString::new("tempvalue2".to_string()));
         let option: Box<dyn RedisDataType> = Box::new(BulkString::new("PX".to_string()));
-        let ttl: Box<dyn RedisDataType> = Box::new(Integer::new(500)); // 500 milliseconds
+        let ttl: Box<dyn RedisDataType> = Box::new(BulkString::new("500".to_string())); // 500 milliseconds
 
         let command = SetCommand::new(&[key, value, option, ttl]).unwrap();
         let response = command.execute(&store).unwrap();
@@ -248,7 +237,7 @@ mod tests {
         let key: Box<dyn RedisDataType> = Box::new(BulkString::new("key_ex".to_string()));
         let value: Box<dyn RedisDataType> = Box::new(BulkString::new("val_ex".to_string()));
         let option: Box<dyn RedisDataType> = Box::new(BulkString::new("ex".to_string())); // lowercase
-        let ttl: Box<dyn RedisDataType> = Box::new(Integer::new(1));
+        let ttl: Box<dyn RedisDataType> = Box::new(BulkString::new("1".to_string()));
 
         let command = SetCommand::new(&[key, value, option, ttl]).unwrap();
         assert!(command.ttl.is_some());
@@ -261,7 +250,7 @@ mod tests {
         let key: Box<dyn RedisDataType> = Box::new(BulkString::new("key_px".to_string()));
         let value: Box<dyn RedisDataType> = Box::new(BulkString::new("val_px".to_string()));
         let option: Box<dyn RedisDataType> = Box::new(BulkString::new("PX".to_string())); // uppercase
-        let ttl: Box<dyn RedisDataType> = Box::new(Integer::new(1000));
+        let ttl: Box<dyn RedisDataType> = Box::new(BulkString::new("1000".to_string()));
 
         let command = SetCommand::new(&[key, value, option, ttl]).unwrap();
         assert!(command.ttl.is_some());
@@ -290,7 +279,7 @@ mod tests {
         let key1: Box<dyn RedisDataType> = Box::new(BulkString::new("key_ttl".to_string()));
         let value1: Box<dyn RedisDataType> = Box::new(BulkString::new("val1".to_string()));
         let option1: Box<dyn RedisDataType> = Box::new(BulkString::new("PX".to_string()));
-        let ttl1: Box<dyn RedisDataType> = Box::new(Integer::new(200));
+        let ttl1: Box<dyn RedisDataType> = Box::new(BulkString::new("200".to_string()));
         let command1 = SetCommand::new(&[key1, value1, option1, ttl1]).unwrap();
         command1.execute(&store).unwrap();
 
@@ -375,7 +364,7 @@ mod tests {
         let key: Box<dyn RedisDataType> = Box::new(BulkString::new("key".to_string()));
         let value: Box<dyn RedisDataType> = Box::new(BulkString::new("value".to_string()));
         let option: Box<dyn RedisDataType> = Box::new(BulkString::new("INVALID".to_string()));
-        let ttl: Box<dyn RedisDataType> = Box::new(Integer::new(100));
+        let ttl: Box<dyn RedisDataType> = Box::new(BulkString::new("100".to_string()));
 
         let result = SetCommand::new(&[key, value, option, ttl]);
         assert!(result.is_err());
@@ -390,7 +379,7 @@ mod tests {
         let key: Box<dyn RedisDataType> = Box::new(BulkString::new("key".to_string()));
         let value: Box<dyn RedisDataType> = Box::new(BulkString::new("value".to_string()));
         let option: Box<dyn RedisDataType> = Box::new(BulkString::new("EX".to_string()));
-        let ttl: Box<dyn RedisDataType> = Box::new(Integer::new(-5));
+        let ttl: Box<dyn RedisDataType> = Box::new(BulkString::new("-5".to_string()));
 
         let result = SetCommand::new(&[key, value, option, ttl]);
         assert!(result.is_err());
@@ -405,7 +394,7 @@ mod tests {
         let key: Box<dyn RedisDataType> = Box::new(BulkString::new("key".to_string()));
         let value: Box<dyn RedisDataType> = Box::new(BulkString::new("value".to_string()));
         let option: Box<dyn RedisDataType> = Box::new(BulkString::new("PX".to_string()));
-        let ttl: Box<dyn RedisDataType> = Box::new(Integer::new(0));
+        let ttl: Box<dyn RedisDataType> = Box::new(BulkString::new("0".to_string()));
 
         let result = SetCommand::new(&[key, value, option, ttl]);
         assert!(result.is_err());
@@ -446,7 +435,7 @@ mod tests {
         let key: Box<dyn RedisDataType> = Box::new(BulkString::new("key".to_string()));
         let value: Box<dyn RedisDataType> = Box::new(BulkString::new("value".to_string()));
         let option: Box<dyn RedisDataType> = Box::new(Integer::new(100)); // Wrong type
-        let ttl: Box<dyn RedisDataType> = Box::new(Integer::new(100));
+        let ttl: Box<dyn RedisDataType> = Box::new(BulkString::new("100".to_string()));
 
         let result = SetCommand::new(&[key, value, option, ttl]);
         assert!(result.is_err());
@@ -461,13 +450,13 @@ mod tests {
         let key: Box<dyn RedisDataType> = Box::new(BulkString::new("key".to_string()));
         let value: Box<dyn RedisDataType> = Box::new(BulkString::new("value".to_string()));
         let option: Box<dyn RedisDataType> = Box::new(BulkString::new("EX".to_string()));
-        let ttl: Box<dyn RedisDataType> = Box::new(BulkString::new("not_a_number".to_string())); // Wrong type
+        let ttl: Box<dyn RedisDataType> = Box::new(BulkString::new("not_a_number".to_string())); // Invalid format
 
         let result = SetCommand::new(&[key, value, option, ttl]);
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
             .to_string()
-            .contains("Expected integer for TTL value"));
+            .contains("Invalid TTL value"));
     }
 }

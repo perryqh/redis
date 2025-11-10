@@ -226,7 +226,7 @@ mod tests {
 
         // SET key value EX 1 (expire in 1 second)
         let reader = Cursor::new(
-            b"*5\r\n$3\r\nSET\r\n$6\r\ntestex\r\n$5\r\nvalue\r\n$2\r\nEX\r\n:1\r\n".to_vec(),
+            b"*5\r\n$3\r\nSET\r\n$6\r\ntestex\r\n$5\r\nvalue\r\n$2\r\nEX\r\n$1\r\n1\r\n".to_vec(),
         );
         let mut writer = Vec::new();
         handle_connection_impl(reader, &mut writer, &store).await?;
@@ -246,7 +246,7 @@ mod tests {
 
         // SET key value PX 500 (expire in 500 milliseconds)
         let reader = Cursor::new(
-            b"*5\r\n$3\r\nSET\r\n$6\r\ntestpx\r\n$5\r\nvalue\r\n$2\r\nPX\r\n:500\r\n".to_vec(),
+            b"*5\r\n$3\r\nSET\r\n$6\r\ntestpx\r\n$5\r\nvalue\r\n$2\r\nPX\r\n$3\r\n500\r\n".to_vec(),
         );
         let mut writer = Vec::new();
         handle_connection_impl(reader, &mut writer, &store).await?;
@@ -266,7 +266,8 @@ mod tests {
 
         // SET with expiration
         let set_reader = Cursor::new(
-            b"*5\r\n$3\r\nSET\r\n$7\r\nmykey99\r\n$7\r\nmyval99\r\n$2\r\nPX\r\n:200\r\n".to_vec(),
+            b"*5\r\n$3\r\nSET\r\n$7\r\nmykey99\r\n$7\r\nmyval99\r\n$2\r\nPX\r\n$3\r\n200\r\n"
+                .to_vec(),
         );
         let mut set_writer = Vec::new();
         handle_connection_impl(set_reader, &mut set_writer, &store).await?;
@@ -296,7 +297,7 @@ mod tests {
 
         // SET with short expiration
         let set1_reader = Cursor::new(
-            b"*5\r\n$3\r\nSET\r\n$8\r\noverride\r\n$2\r\nv1\r\n$2\r\nPX\r\n:100\r\n".to_vec(),
+            b"*5\r\n$3\r\nSET\r\n$8\r\noverride\r\n$2\r\nv1\r\n$2\r\nPX\r\n$3\r\n100\r\n".to_vec(),
         );
         let mut set1_writer = Vec::new();
         handle_connection_impl(set1_reader, &mut set1_writer, &store).await?;
@@ -327,14 +328,14 @@ mod tests {
 
         // SET key1 with long expiration
         let reader1 = Cursor::new(
-            b"*5\r\n$3\r\nSET\r\n$4\r\nkey1\r\n$4\r\nval1\r\n$2\r\nPX\r\n:1000\r\n".to_vec(),
+            b"*5\r\n$3\r\nSET\r\n$4\r\nkey1\r\n$4\r\nval1\r\n$2\r\nPX\r\n$4\r\n1000\r\n".to_vec(),
         );
         let mut writer1 = Vec::new();
         handle_connection_impl(reader1, &mut writer1, &store).await?;
 
         // SET key2 with short expiration
         let reader2 = Cursor::new(
-            b"*5\r\n$3\r\nSET\r\n$4\r\nkey2\r\n$4\r\nval2\r\n$2\r\nPX\r\n:100\r\n".to_vec(),
+            b"*5\r\n$3\r\nSET\r\n$4\r\nkey2\r\n$4\r\nval2\r\n$2\r\nPX\r\n$3\r\n100\r\n".to_vec(),
         );
         let mut writer2 = Vec::new();
         handle_connection_impl(reader2, &mut writer2, &store).await?;
