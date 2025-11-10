@@ -29,7 +29,6 @@ pub fn parse_command(cursor: &mut Cursor<&[u8]>) -> Result<Option<Box<dyn RedisC
     if let Some(data_type) = parse_data_type(cursor)? {
         // Check if it's an Array with a command
         if let Some(array) = data_type.as_any().downcast_ref::<Array>() {
-            dbg!(&array.values);
             if !array.values.is_empty() {
                 if let Some(bulk_string) = array.values[0].as_any().downcast_ref::<BulkString>() {
                     match bulk_string.value.to_uppercase().as_str() {
@@ -246,10 +245,22 @@ mod tests {
     use super::*;
     use crate::store::Store;
 
+    fn redis_array_of_bulk_strings(strs: Vec<&str>) -> Vec<u8> {
+        let mut result = vec![b'*', strs.len().to_string().as_bytes()[0], b'\r', b'\n'];
+
+        for s in strs {
+            result.extend_from_slice(&[b'$', s.len().to_string().as_bytes()[0], b'\r', b'\n']);
+            result.extend_from_slice(s.as_bytes());
+            result.extend_from_slice(b"\r\n");
+        }
+
+        result
+    }
+
     #[test]
     fn test_parse_array_with_bulk_string_ping_lowercase() -> Result<()> {
         // Test parsing a lowercase PING command sent as an Array with BulkString
-        let data = b"*1\r\n$4\r\nping\r\n";
+        let data = redis_array_of_bulk_strings(vec!["ping"]);
         let mut cursor = Cursor::new(data.as_ref());
 
         // Parse as a command
@@ -336,7 +347,7 @@ mod tests {
     #[test]
     fn test_echo_command() -> Result<()> {
         // Test parsing an ECHO command sent as an Array with BulkString
-        let data = b"*2\r\n$4\r\nECHO\r\n$3\r\nhey\r\n";
+        let data = redis_array_of_bulk_strings(vec!["ECHO", "hey"]);
         let mut cursor = Cursor::new(data.as_ref());
 
         // Parse as a command
@@ -382,6 +393,11 @@ mod tests {
             "Expected second BulkString value to be 'hey'"
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_rpush_pop() -> Result<()> {
         Ok(())
     }
 
