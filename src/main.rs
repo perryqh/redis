@@ -1,22 +1,24 @@
 use std::io::Cursor;
+use std::sync::Arc;
 
 use anyhow::Result;
 
 use codecrafters_redis::input_command_parser::parse_command;
 use codecrafters_redis::store::Store;
-use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpListener, TcpStream};
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let mut store = Store::new();
+    let store = Arc::new(Store::new());
     let listener = TcpListener::bind("127.0.0.1:6379").await?;
     loop {
         let (socket, peer_addr) = listener.accept().await?;
         println!("Accepted connection from: {}", peer_addr);
 
+        let store_clone = Arc::clone(&store);
         tokio::spawn(async move {
-            if let Err(e) = handle_connection(socket, &mut store).await {
+            if let Err(e) = handle_connection(socket, &store_clone).await {
                 eprintln!("Error handling connection: {}", e);
             }
         });
@@ -24,18 +26,19 @@ async fn main() -> Result<()> {
 }
 
 /// Handles a single client connection by sending a PONG response
-async fn handle_connection(mut socket: TcpStream, store: &mut Store) -> Result<()> {
+async fn handle_connection(mut socket: TcpStream, store: &Store) -> Result<()> {
     let (_reader, writer) = socket.split();
     handle_connection_impl(_reader, writer, store).await
 }
 
 /// Generic connection handler that works with any async reader/writer
-async fn handle_connection_impl<R, W>(mut reader: R, mut writer: W, store: &mut Store) -> Result<()>
+async fn handle_connection_impl<R, W>(mut reader: R, mut writer: W, store: &Store) -> Result<()>
 where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
     use tokio::io::AsyncReadExt;
+    use tokio::io::AsyncWriteExt;
 
     // Continuously read and process commands
     loop {
@@ -51,7 +54,7 @@ where
         let mut cursor = Cursor::new(buffer.as_slice());
 
         while let Ok(Some(command)) = parse_command(&mut cursor) {
-            let response = command.execute(mut store)?;
+            let response = command.execute(store)?;
             writer.write_all(&response).await?;
             writer.flush().await?;
         }
@@ -61,10 +64,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use codecrafters_redis::store::Store;
-
     use super::*;
-
     use std::io::Cursor;
 
     fn ping_command() -> Vec<u8> {
@@ -120,7 +120,7 @@ mod tests {
     async fn test_set_get() -> Result<()> {
         let store = Store::new();
         // Use in-memory buffers for testing instead of real TCP connections
-        let reader = Cursor::new(b"*3\r\n$3\r\nSET\r\n$4\r\ntaco\r\n$4smell\r\n".to_vec());
+        let reader = Cursor::new(b"*3\r\n$3\r\nSET\r\n$4\r\ntaco\r\n$5\r\nsmell\r\n".to_vec());
         let mut writer = Vec::new();
 
         // Call the generic handler
@@ -174,16 +174,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_multiple_writers() -> Result<()> {
+        let store = Store::new();
         // Test with multiple different writer types to ensure generics work
         let reader1 = Cursor::new(ping_command());
         let mut buffer1 = Vec::new();
-        handle_connection_impl(reader1, &mut buffer1).await?;
+        handle_connection_impl(reader1, &mut buffer1, &store).await?;
         assert_eq!(buffer1, b"+PONG\r\n");
 
         // Test with a cursor as writer
         let reader2 = Cursor::new(b"*1\r\n$4\r\nPING\r\n".to_vec());
         let mut cursor_writer = Cursor::new(Vec::new());
-        handle_connection_impl(reader2, &mut cursor_writer).await?;
+        handle_connection_impl(reader2, &mut cursor_writer, &store).await?;
         assert_eq!(cursor_writer.into_inner(), b"+PONG\r\n");
 
         Ok(())

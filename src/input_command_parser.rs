@@ -2,7 +2,7 @@ use std::io::{Cursor, Read};
 
 use anyhow::Result;
 
-use crate::commands::{EchoCommand, PingCommand, RedisCommand, SetCommand};
+use crate::commands::{EchoCommand, GetCommand, PingCommand, RedisCommand, SetCommand};
 use crate::datatypes::{Array, BulkString, Integer, RedisDataType, SimpleError, SimpleString};
 
 /// Parse a Redis data type from the cursor
@@ -43,7 +43,10 @@ pub fn parse_command(cursor: &mut Cursor<&[u8]>) -> Result<Option<Box<dyn RedisC
                             let set_command = SetCommand::new(&array.values[1..])?;
                             return Ok(Some(Box::new(set_command)));
                         }
-
+                        "GET" if array.values.len() >= 2 => {
+                            let get_command = GetCommand::new(&array.values[1..])?;
+                            return Ok(Some(Box::new(get_command)));
+                        }
                         _ => {}
                     }
                 }
@@ -240,6 +243,7 @@ fn parse_error(cursor: &mut Cursor<&[u8]>) -> Result<Option<Box<dyn RedisDataTyp
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::store::Store;
 
     #[test]
     fn test_parse_array_with_bulk_string_ping_lowercase() -> Result<()> {
@@ -255,7 +259,8 @@ mod tests {
         );
 
         // Verify the command returns the expected PONG response
-        let response = command.unwrap().response()?;
+        let store = Store::new();
+        let response = command.unwrap().execute(&store)?;
         assert_eq!(response, b"+PONG\r\n");
 
         // Also test the data type parser directly
@@ -341,7 +346,8 @@ mod tests {
         );
 
         // Verify the command returns the expected PONG response
-        let response = command.unwrap().response()?;
+        let store = Store::new();
+        let response = command.unwrap().execute(&store)?;
         assert_eq!(response, b"$3\r\nhey\r\n");
 
         // Also test the data type parser directly

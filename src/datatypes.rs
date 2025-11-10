@@ -94,8 +94,7 @@ impl RedisDataType for BulkString {
 }
 
 // $-1\r\n
-pub struct NullBulkString {
-}
+pub struct NullBulkString {}
 
 impl RedisDataType for NullBulkString {
     fn to_bytes(&self) -> Result<Vec<u8>> {

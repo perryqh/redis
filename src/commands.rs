@@ -1,16 +1,16 @@
 use crate::{
     datatypes::{BulkString, NullBulkString, RedisDataType, SimpleString},
-    store::{self, Store},
+    store::Store,
 };
 use anyhow::{bail, Result};
 
 pub trait RedisCommand: Send {
-    fn execute(&self, store: &mut Store) -> Result<Vec<u8>>;
+    fn execute(&self, store: &Store) -> Result<Vec<u8>>;
 }
 
 pub struct PingCommand {}
 impl RedisCommand for PingCommand {
-    fn execute(&self, _store: &mut Store) -> Result<Vec<u8>> {
+    fn execute(&self, _store: &Store) -> Result<Vec<u8>> {
         SimpleString::new("PONG".to_string()).to_bytes()
     }
 }
@@ -35,7 +35,7 @@ impl EchoCommand {
 }
 
 impl RedisCommand for EchoCommand {
-    fn execute(&self, _store: &mut Store) -> Result<Vec<u8>> {
+    fn execute(&self, _store: &Store) -> Result<Vec<u8>> {
         BulkString::new(self.message.clone()).to_bytes()
     }
 }
@@ -70,7 +70,7 @@ impl SetCommand {
 }
 
 impl RedisCommand for SetCommand {
-    fn execute(&self, store: &mut Store) -> Result<Vec<u8>> {
+    fn execute(&self, store: &Store) -> Result<Vec<u8>> {
         store.set(self.key.clone(), self.value.clone());
         SimpleString::new("OK".to_string()).to_bytes()
     }
@@ -96,9 +96,9 @@ impl GetCommand {
 }
 
 impl RedisCommand for GetCommand {
-    fn execute(&self, store: &mut Store) -> Result<Vec<u8>> {
+    fn execute(&self, store: &Store) -> Result<Vec<u8>> {
         match store.get(&self.key) {
-            Some(value) => BulkString::new(value.clone()).to_bytes(),
+            Some(value) => BulkString::new(value).to_bytes(),
             None => NullBulkString {}.to_bytes(),
         }
     }
@@ -112,16 +112,18 @@ mod tests {
 
     #[test]
     fn test_ping_command() {
+        let store = Store::new();
         let command = PingCommand {};
-        let response = command.response().unwrap();
+        let response = command.execute(&store).unwrap();
         assert_eq!(response, b"+PONG\r\n");
     }
 
     #[test]
     fn test_echo_command() {
+        let store = Store::new();
         let bulk_string: Box<dyn RedisDataType> = Box::new(BulkString::new("Hello".to_string()));
         let command = EchoCommand::new(&[bulk_string]);
-        let response = command.response().unwrap();
+        let response = command.execute(&store).unwrap();
         assert_eq!(response, b"$5\r\nHello\r\n");
     }
 }
