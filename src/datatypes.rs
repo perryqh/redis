@@ -44,6 +44,16 @@ pub struct Array {
 // *-1\r\n
 pub struct NullArray {}
 
+impl RedisDataType for NullArray {
+    fn to_bytes(&self) -> Result<Vec<u8>> {
+        Ok(b"*-1\r\n".to_vec())
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
 // :[<+|->]<value>\r\n
 // unsigned base 10
 #[derive(Debug, PartialEq)]
@@ -85,7 +95,16 @@ impl RedisDataType for BulkString {
 
 // $-1\r\n
 pub struct NullBulkString {
-    pub value: String,
+}
+
+impl RedisDataType for NullBulkString {
+    fn to_bytes(&self) -> Result<Vec<u8>> {
+        Ok(b"$-1\r\n".to_vec())
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 }
 
 impl RedisDataType for SimpleString {

@@ -2,7 +2,7 @@ use std::io::{Cursor, Read};
 
 use anyhow::Result;
 
-use crate::commands::{EchoCommand, PingCommand, RedisCommand};
+use crate::commands::{EchoCommand, PingCommand, RedisCommand, SetCommand};
 use crate::datatypes::{Array, BulkString, Integer, RedisDataType, SimpleError, SimpleString};
 
 /// Parse a Redis data type from the cursor
@@ -39,6 +39,11 @@ pub fn parse_command(cursor: &mut Cursor<&[u8]>) -> Result<Option<Box<dyn RedisC
                             let echo_args = &array.values[1..];
                             return Ok(Some(Box::new(EchoCommand::new(echo_args))));
                         }
+                        "SET" if array.values.len() >= 3 => {
+                            let set_command = SetCommand::new(&array.values[1..])?;
+                            return Ok(Some(Box::new(set_command)));
+                        }
+
                         _ => {}
                     }
                 }

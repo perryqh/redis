@@ -3,18 +3,20 @@ use std::io::Cursor;
 use anyhow::Result;
 
 use codecrafters_redis::input_command_parser::parse_command;
+use codecrafters_redis::store::Store;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let mut store = Store::new();
     let listener = TcpListener::bind("127.0.0.1:6379").await?;
     loop {
         let (socket, peer_addr) = listener.accept().await?;
         println!("Accepted connection from: {}", peer_addr);
 
         tokio::spawn(async move {
-            if let Err(e) = handle_connection(socket).await {
+            if let Err(e) = handle_connection(socket, &mut store).await {
                 eprintln!("Error handling connection: {}", e);
             }
         });
@@ -22,13 +24,13 @@ async fn main() -> Result<()> {
 }
 
 /// Handles a single client connection by sending a PONG response
-async fn handle_connection(mut socket: TcpStream) -> Result<()> {
+async fn handle_connection(mut socket: TcpStream, store: &mut Store) -> Result<()> {
     let (_reader, writer) = socket.split();
-    handle_connection_impl(_reader, writer).await
+    handle_connection_impl(_reader, writer, store).await
 }
 
 /// Generic connection handler that works with any async reader/writer
-async fn handle_connection_impl<R, W>(mut reader: R, mut writer: W) -> Result<()>
+async fn handle_connection_impl<R, W>(mut reader: R, mut writer: W, store: &mut Store) -> Result<()>
 where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
@@ -49,7 +51,7 @@ where
         let mut cursor = Cursor::new(buffer.as_slice());
 
         while let Ok(Some(command)) = parse_command(&mut cursor) {
-            let response = command.response()?;
+            let response = command.execute(mut store)?;
             writer.write_all(&response).await?;
             writer.flush().await?;
         }
@@ -59,10 +61,11 @@ where
 
 #[cfg(test)]
 mod tests {
+    use codecrafters_redis::store::Store;
+
     use super::*;
 
     use std::io::Cursor;
-    use tokio::io::AsyncReadExt;
 
     fn ping_command() -> Vec<u8> {
         b"*1\r\n$4\r\nPING\r\n".to_vec()
@@ -76,61 +79,96 @@ mod tests {
         let reader = Cursor::new(ping_command());
 
         // Call the generic handler
-        handle_connection_impl(reader, &mut writer).await?;
+        handle_connection_impl(reader, &mut writer, &Store::new()).await?;
 
         // Verify the output
         assert_eq!(writer, b"+PONG\r\n");
 
         Ok(())
     }
-    // write a test that sends multiple PINGs and expects corresponding PONGs
 
-    async fn test_handle_connection_commands(send: &[u8], expected_response: &[u8]) -> Result<()> {
-        // Create a pair of connected sockets for testing
-        let listener = TcpListener::bind("127.0.0.1:0").await?;
-        let addr = listener.local_addr()?;
+    struct ConnectionTestInput {
+        send: Vec<u8>,
+        expected_response: Vec<u8>,
+    }
 
-        // Spawn a task to accept the connection
-        let server_task = tokio::spawn(async move {
-            let (socket, _) = listener.accept().await.unwrap();
-            handle_connection(socket).await
-        });
+    async fn test_handle_connection_commands(input: ConnectionTestInput) -> Result<()> {
+        // Use in-memory buffers for testing instead of real TCP connections
+        let reader = Cursor::new(input.send);
+        let mut writer = Vec::new();
 
-        // Connect as a client
-        let mut client = TcpStream::connect(addr).await?;
-        use tokio::io::AsyncWriteExt;
+        // Call the generic handler
+        handle_connection_impl(reader, &mut writer, &Store::new()).await?;
 
-        // Send a PING command to the server
-        client.write_all(send).await?;
-        client.flush().await?;
-
-        // Read the response from the server
-        let mut buffer = vec![0; 1024];
-        let n = client.read(&mut buffer).await?;
-        buffer.truncate(n);
-
-        // Verify we received the expected PONG response
-        assert_eq!(&buffer, &expected_response);
-
-        // Shutdown the connection to signal no more data
-        client.shutdown().await?;
-
-        // Wait for the server to handle the connection
-        server_task.await??;
+        // Verify the output
+        assert_eq!(writer, input.expected_response);
 
         Ok(())
     }
 
     #[tokio::test]
     async fn test_real_ping() -> Result<()> {
-        test_handle_connection_commands(&ping_command(), b"+PONG\r\n").await?;
+        test_handle_connection_commands(ConnectionTestInput {
+            send: b"*1\r\n$4\r\nPING\r\n".to_vec(),
+            expected_response: b"+PONG\r\n".to_vec(),
+        })
+        .await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_set_get() -> Result<()> {
+        let store = Store::new();
+        // Use in-memory buffers for testing instead of real TCP connections
+        let reader = Cursor::new(b"*3\r\n$3\r\nSET\r\n$4\r\ntaco\r\n$4smell\r\n".to_vec());
+        let mut writer = Vec::new();
+
+        // Call the generic handler
+        handle_connection_impl(reader, &mut writer, &store).await?;
+
+        // Verify the output
+        assert_eq!(writer, b"+OK\r\n".to_vec());
+        assert_eq!(store.get("taco"), Some("smell".to_string()));
+
+        let reader = Cursor::new(
+            b"*3\r\n$3\r\nSET\r\n$6\r\nphrase\r\n$28\r\nshould have been a rake task\r\n".to_vec(),
+        );
+        let mut writer = Vec::new();
+
+        // Call the generic handler
+        handle_connection_impl(reader, &mut writer, &store).await?;
+
+        // Verify the output
+        assert_eq!(writer, b"+OK\r\n".to_vec());
+        assert_eq!(
+            store.get("phrase"),
+            Some("should have been a rake task".to_string())
+        );
+
+        let reader = Cursor::new(b"*2\r\n$3\r\nGET\r\n$6\r\nphrase\r\n".to_vec());
+        let mut writer = Vec::new();
+        handle_connection_impl(reader, &mut writer, &store).await?;
+
+        // Verify the output
+        assert_eq!(writer, b"$28\r\nshould have been a rake task\r\n".to_vec());
+
+        let reader = Cursor::new(b"*2\r\n$3\r\nGET\r\n$6\r\nunknown\r\n".to_vec());
+        let mut writer = Vec::new();
+        handle_connection_impl(reader, &mut writer, &store).await?;
+
+        // Verify the output
+        assert_eq!(writer, b"$-1\r\n".to_vec());
+
         Ok(())
     }
 
     #[tokio::test]
     async fn test_real_echo() -> Result<()> {
-        test_handle_connection_commands(b"*2\r\n$4\r\nECHO\r\n$3\r\nhey\r\n", b"$3\r\nhey\r\n")
-            .await?;
+        test_handle_connection_commands(ConnectionTestInput {
+            send: b"*2\r\n$4\r\nECHO\r\n$3\r\nhey\r\n".to_vec(),
+            expected_response: b"$3\r\nhey\r\n".to_vec(),
+        })
+        .await?;
         Ok(())
     }
 
