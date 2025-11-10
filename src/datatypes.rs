@@ -1,7 +1,7 @@
 use anyhow::Result;
-use std::any::Any;
+use std::{any::Any, fmt::Debug};
 
-pub trait RedisDataType: Any {
+pub trait RedisDataType: Any + Debug {
     fn to_bytes(&self) -> Result<Vec<u8>>;
     fn as_any(&self) -> &dyn Any;
 }
@@ -42,6 +42,7 @@ pub struct Array {
 }
 
 // *-1\r\n
+#[derive(Debug)]
 pub struct NullArray {}
 
 impl RedisDataType for NullArray {
@@ -100,6 +101,7 @@ impl RedisDataType for BulkString {
 }
 
 // $-1\r\n
+#[derive(Debug)]
 pub struct NullBulkString {}
 
 impl RedisDataType for NullBulkString {
@@ -136,6 +138,19 @@ impl RedisDataType for Array {
 
     fn as_any(&self) -> &dyn Any {
         self
+    }
+}
+
+impl Debug for Array {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "*{} [", self.values.len())?;
+        for (i, value) in self.values.iter().enumerate() {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{:?}", value)?;
+        }
+        write!(f, "]")
     }
 }
 

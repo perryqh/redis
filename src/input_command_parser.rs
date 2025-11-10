@@ -29,6 +29,7 @@ pub fn parse_command(cursor: &mut Cursor<&[u8]>) -> Result<Option<Box<dyn RedisC
     if let Some(data_type) = parse_data_type(cursor)? {
         // Check if it's an Array with a command
         if let Some(array) = data_type.as_any().downcast_ref::<Array>() {
+            dbg!(&array.values);
             if !array.values.is_empty() {
                 if let Some(bulk_string) = array.values[0].as_any().downcast_ref::<BulkString>() {
                     match bulk_string.value.to_uppercase().as_str() {
