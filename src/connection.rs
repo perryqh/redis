@@ -4,7 +4,7 @@ use anyhow::Result;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 
-use crate::input_command_parser::parse_command;
+use crate::resp::parse_command;
 use crate::store::Store;
 
 /// Handles a single client connection

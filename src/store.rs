@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
+use crate::rdb::parse_rdb_file;
+
 /// The type of data that can be stored in Redis
 #[derive(Clone, Debug, PartialEq)]
 pub enum DataType {
@@ -265,7 +267,7 @@ impl Store<DataType> {
     /// Creates a store from a config (loads RDB file if specified)
     pub fn from_config(config: &crate::config::Config) -> Self {
         Self {
-            inner: crate::rdb::parse_rdb_file(config),
+            inner: parse_rdb_file(config),
         }
     }
 
