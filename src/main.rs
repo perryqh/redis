@@ -1,12 +1,16 @@
 use std::sync::Arc;
 
 use anyhow::Result;
+use clap::Parser;
+use codecrafters_redis::cli::Args;
 use codecrafters_redis::connection::handle_connection;
 use codecrafters_redis::store::Store;
 use tokio::net::TcpListener;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let args = Args::parse();
+    dbg!(args);
     // Create a shared store wrapped in Arc for thread-safe access across tasks
     let store = Arc::new(Store::new());
 
