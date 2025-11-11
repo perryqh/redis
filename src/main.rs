@@ -13,7 +13,7 @@ async fn main() -> Result<()> {
     let args = Args::parse();
     let config = Config::new(args)?;
     // Create a shared store wrapped in Arc for thread-safe access across tasks
-    let store = Arc::new(Store::new(config));
+    let store = Arc::new(Store::from_config(&config));
 
     // Bind to the Redis default port
     let listener = TcpListener::bind("127.0.0.1:6379").await?;
