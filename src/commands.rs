@@ -107,9 +107,9 @@ impl SetCommand {
 impl RedisCommand for SetCommand {
     fn execute(&self, store: &Store) -> Result<Vec<u8>> {
         if let Some(ttl) = self.ttl {
-            store.set_with_expiration(self.key.clone(), self.value.clone(), ttl);
+            store.set_string_with_expiration(self.key.clone(), self.value.clone(), ttl);
         } else {
-            store.set(self.key.clone(), self.value.clone());
+            store.set_string(self.key.clone(), self.value.clone());
         }
         SimpleString::new("OK".to_string()).to_bytes()
     }
@@ -129,7 +129,7 @@ impl GetCommand {
 
 impl RedisCommand for GetCommand {
     fn execute(&self, store: &Store) -> Result<Vec<u8>> {
-        match store.get(&self.key) {
+        match store.get_string(&self.key) {
             Some(value) => BulkString::new(value).to_bytes(),
             None => NullBulkString {}.to_bytes(),
         }
@@ -171,7 +171,7 @@ mod tests {
         let response = command.execute(&store).unwrap();
 
         assert_eq!(response, b"+OK\r\n");
-        assert_eq!(store.get("mykey"), Some("myvalue".to_string()));
+        assert_eq!(store.get_string("mykey"), Some("myvalue".to_string()));
     }
 
     #[test]
@@ -183,14 +183,14 @@ mod tests {
         let value1: Box<dyn RedisDataType> = Box::new(BulkString::new("value1".to_string()));
         let command1 = SetCommand::new(&[key1, value1]).unwrap();
         command1.execute(&store).unwrap();
-        assert_eq!(store.get("key1"), Some("value1".to_string()));
+        assert_eq!(store.get_string("key1"), Some("value1".to_string()));
 
         // Overwrite with new value
         let key2: Box<dyn RedisDataType> = Box::new(BulkString::new("key1".to_string()));
         let value2: Box<dyn RedisDataType> = Box::new(BulkString::new("value2".to_string()));
         let command2 = SetCommand::new(&[key2, value2]).unwrap();
         command2.execute(&store).unwrap();
-        assert_eq!(store.get("key1"), Some("value2".to_string()));
+        assert_eq!(store.get_string("key1"), Some("value2".to_string()));
     }
 
     #[test]
@@ -205,11 +205,11 @@ mod tests {
         let response = command.execute(&store).unwrap();
 
         assert_eq!(response, b"+OK\r\n");
-        assert_eq!(store.get("tempkey"), Some("tempvalue".to_string()));
+        assert_eq!(store.get_string("tempkey"), Some("tempvalue".to_string()));
 
         // Wait for expiration
         thread::sleep(Duration::from_millis(1100));
-        assert_eq!(store.get("tempkey"), None);
+        assert_eq!(store.get_string("tempkey"), None);
     }
 
     #[test]
@@ -224,16 +224,16 @@ mod tests {
         let response = command.execute(&store).unwrap();
 
         assert_eq!(response, b"+OK\r\n");
-        assert_eq!(store.get("tempkey2"), Some("tempvalue2".to_string()));
+        assert_eq!(store.get_string("tempkey2"), Some("tempvalue2".to_string()));
 
         // Wait for expiration
         thread::sleep(Duration::from_millis(600));
-        assert_eq!(store.get("tempkey2"), None);
+        assert_eq!(store.get_string("tempkey2"), None);
     }
 
     #[test]
     fn test_set_command_ex_lowercase() {
-        let _store = Store::new();
+        let _store: Store = Store::new();
         let key: Box<dyn RedisDataType> = Box::new(BulkString::new("key_ex".to_string()));
         let value: Box<dyn RedisDataType> = Box::new(BulkString::new("val_ex".to_string()));
         let option: Box<dyn RedisDataType> = Box::new(BulkString::new("ex".to_string())); // lowercase
@@ -246,7 +246,7 @@ mod tests {
 
     #[test]
     fn test_set_command_px_uppercase() {
-        let _store = Store::new();
+        let _store: Store = Store::new();
         let key: Box<dyn RedisDataType> = Box::new(BulkString::new("key_px".to_string()));
         let value: Box<dyn RedisDataType> = Box::new(BulkString::new("val_px".to_string()));
         let option: Box<dyn RedisDataType> = Box::new(BulkString::new("PX".to_string())); // uppercase
@@ -268,7 +268,7 @@ mod tests {
 
         command.execute(&store).unwrap();
         thread::sleep(Duration::from_millis(100));
-        assert_eq!(store.get("persistent"), Some("forever".to_string()));
+        assert_eq!(store.get_string("persistent"), Some("forever".to_string()));
     }
 
     #[test]
@@ -292,13 +292,13 @@ mod tests {
         // Wait past original expiration time
         thread::sleep(Duration::from_millis(250));
         // Should still exist because we overwrote without TTL
-        assert_eq!(store.get("key_ttl"), Some("val2".to_string()));
+        assert_eq!(store.get_string("key_ttl"), Some("val2".to_string()));
     }
 
     #[test]
     fn test_get_command_existing_key() {
         let store = Store::new();
-        store.set("existing".to_string(), "value".to_string());
+        store.set_string("existing".to_string(), "value".to_string());
 
         let key: Box<dyn RedisDataType> = Box::new(BulkString::new("existing".to_string()));
         let command = GetCommand::new(&[key]).unwrap();
@@ -320,8 +320,8 @@ mod tests {
 
     #[test]
     fn test_get_command_expired_key() {
-        let store = Store::new();
-        store.set_with_expiration(
+        let store: Store = Store::new();
+        store.set_string_with_expiration(
             "expired".to_string(),
             "value".to_string(),
             Duration::from_millis(50),

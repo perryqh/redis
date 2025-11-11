@@ -155,7 +155,7 @@ mod tests {
         let mut writer = Vec::new();
         handle_connection_impl(reader, &mut writer, &store).await?;
         assert_eq!(writer, b"+OK\r\n".to_vec());
-        assert_eq!(store.get("taco"), Some("smell".to_string()));
+        assert_eq!(store.get_string("taco"), Some("smell".to_string()));
 
         // Test another SET command with longer value
         let reader = Cursor::new(
@@ -165,7 +165,7 @@ mod tests {
         handle_connection_impl(reader, &mut writer, &store).await?;
         assert_eq!(writer, b"+OK\r\n".to_vec());
         assert_eq!(
-            store.get("phrase"),
+            store.get_string("phrase"),
             Some("should have been a rake task".to_string())
         );
 
@@ -231,11 +231,11 @@ mod tests {
         let mut writer = Vec::new();
         handle_connection_impl(reader, &mut writer, &store).await?;
         assert_eq!(writer, b"+OK\r\n");
-        assert_eq!(store.get("testex"), Some("value".to_string()));
+        assert_eq!(store.get_string("testex"), Some("value".to_string()));
 
         // Wait for expiration
         tokio::time::sleep(tokio::time::Duration::from_millis(1100)).await;
-        assert_eq!(store.get("testex"), None);
+        assert_eq!(store.get_string("testex"), None);
 
         Ok(())
     }
@@ -251,11 +251,11 @@ mod tests {
         let mut writer = Vec::new();
         handle_connection_impl(reader, &mut writer, &store).await?;
         assert_eq!(writer, b"+OK\r\n");
-        assert_eq!(store.get("testpx"), Some("value".to_string()));
+        assert_eq!(store.get_string("testpx"), Some("value".to_string()));
 
         // Wait for expiration
         tokio::time::sleep(tokio::time::Duration::from_millis(600)).await;
-        assert_eq!(store.get("testpx"), None);
+        assert_eq!(store.get_string("testpx"), None);
 
         Ok(())
     }
@@ -349,9 +349,9 @@ mod tests {
         tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
 
         // Check all keys
-        assert_eq!(store.get("key1"), Some("val1".to_string())); // Still valid
-        assert_eq!(store.get("key2"), None); // Expired
-        assert_eq!(store.get("key3"), Some("val3".to_string())); // No expiration
+        assert_eq!(store.get_string("key1"), Some("val1".to_string())); // Still valid
+        assert_eq!(store.get_string("key2"), None); // Expired
+        assert_eq!(store.get_string("key3"), Some("val3".to_string())); // No expiration
 
         Ok(())
     }
