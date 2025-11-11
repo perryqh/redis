@@ -46,7 +46,7 @@ pub async fn handle_connection(mut socket: TcpStream, store: &Store) -> Result<(
 /// use codecrafters_redis::store::Store;
 ///
 /// # async fn example() -> anyhow::Result<()> {
-/// let store = Store::new();
+/// let store = Store::new(codecrafters_redis::config::Config::default());
 /// let reader = Cursor::new(b"*1\r\n$4\r\nPING\r\n".to_vec());
 /// let mut writer = Vec::new();
 /// handle_connection_impl(reader, &mut writer, &store).await?;
@@ -83,6 +83,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use crate::config::Config;
+
     use super::*;
     use std::io::Cursor;
 
@@ -95,7 +97,7 @@ mod tests {
         // Use in-memory buffers for testing
         let mut writer = Vec::new();
         let reader = Cursor::new(ping_command());
-        let store = Store::new();
+        let store = Store::new(Config::default());
 
         // Call the generic handler
         handle_connection_impl(reader, &mut writer, &store).await?;
@@ -115,7 +117,7 @@ mod tests {
         // Use in-memory buffers for testing instead of real TCP connections
         let reader = Cursor::new(input.send);
         let mut writer = Vec::new();
-        let store = Store::new();
+        let store = Store::new(Config::default());
 
         // Call the generic handler
         handle_connection_impl(reader, &mut writer, &store).await?;
@@ -148,7 +150,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_set_get_commands() -> Result<()> {
-        let store = Store::new();
+        let store = Store::new(Config::default());
 
         // Test SET command
         let reader = Cursor::new(b"*3\r\n$3\r\nSET\r\n$4\r\ntaco\r\n$5\r\nsmell\r\n".to_vec());
@@ -186,7 +188,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_multiple_commands_in_buffer() -> Result<()> {
-        let store = Store::new();
+        let store = Store::new(Config::default());
 
         // Send multiple commands in one buffer
         let commands = b"*1\r\n$4\r\nPING\r\n*2\r\n$4\r\nECHO\r\n$5\r\nhello\r\n";
@@ -203,7 +205,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_multiple_writer_types() -> Result<()> {
-        let store = Store::new();
+        let store = Store::new(Config::default());
 
         // Test with Vec<u8> as writer
         let reader1 = Cursor::new(ping_command());
@@ -222,7 +224,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_set_with_ex_option() -> Result<()> {
-        let store = Store::new();
+        let store = Store::new(Config::default());
 
         // SET key value EX 1 (expire in 1 second)
         let reader = Cursor::new(
@@ -242,7 +244,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_set_with_px_option() -> Result<()> {
-        let store = Store::new();
+        let store = Store::new(Config::default());
 
         // SET key value PX 500 (expire in 500 milliseconds)
         let reader = Cursor::new(
@@ -262,7 +264,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_set_get_with_expiration_workflow() -> Result<()> {
-        let store = Store::new();
+        let store = Store::new(Config::default());
 
         // SET with expiration
         let set_reader = Cursor::new(
@@ -293,7 +295,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_set_overwrites_expiration() -> Result<()> {
-        let store = Store::new();
+        let store = Store::new(Config::default());
 
         // SET with short expiration
         let set1_reader = Cursor::new(
@@ -324,7 +326,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_multiple_keys_with_different_expirations() -> Result<()> {
-        let store = Store::new();
+        let store = Store::new(Config::default());
 
         // SET key1 with long expiration
         let reader1 = Cursor::new(

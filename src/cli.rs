@@ -5,10 +5,10 @@ use clap::{arg, command, Parser};
 #[command(version, about, long_about = None)]
 pub struct Args {
     /// Name of the RDB directory
-    #[arg(long)]
-    dir: String,
+    #[arg(long, default_value = "~/.redis-rust")]
+    pub dir: String,
 
     /// Name of the RDB file
-    #[arg(long)]
-    dbfilename: String,
+    #[arg(long, default_value = "dump.rdb")]
+    pub dbfilename: String,
 }

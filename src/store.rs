@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
+use crate::config::Config;
+
 /// The type of data that can be stored in Redis
 #[derive(Clone, Debug, PartialEq)]
 pub enum DataType {
@@ -52,7 +54,7 @@ pub struct Store<V = DataType> {
 
 impl<V: Clone> Store<V> {
     /// Creates a new empty store
-    pub fn new() -> Self {
+    pub fn new(_config: Config) -> Self {
         Self {
             inner: Arc::new(RwLock::new(HashMap::new())),
         }
@@ -68,7 +70,7 @@ impl<V: Clone> Store<V> {
     /// ```
     /// use codecrafters_redis::store::Store;
     ///
-    /// let store = Store::new();
+    /// let store = Store::new(codecrafters_redis::config::Config::default());
     /// store.set("key1".to_string(), "value1".to_string());
     /// assert_eq!(store.get("key1"), Some("value1".to_string()));
     /// ```
@@ -90,7 +92,7 @@ impl<V: Clone> Store<V> {
     /// use std::time::Duration;
     /// use std::thread;
     ///
-    /// let store = Store::new();
+    /// let store = Store::new(codecrafters_redis::config::Config::default());
     /// store.set_with_expiration("key1".to_string(), "value1".to_string(), Duration::from_millis(100));
     /// assert_eq!(store.get("key1"), Some("value1".to_string()));
     /// thread::sleep(Duration::from_millis(150));
@@ -114,7 +116,7 @@ impl<V: Clone> Store<V> {
     /// ```
     /// use codecrafters_redis::store::Store;
     ///
-    /// let store = Store::new();
+    /// let store = Store::new(codecrafters_redis::config::Config::default());
     /// store.set("key1".to_string(), "value1".to_string());
     /// assert_eq!(store.get("key1"), Some("value1".to_string()));
     /// assert_eq!(store.get("nonexistent"), None);
@@ -143,7 +145,7 @@ impl<V: Clone> Store<V> {
     /// ```
     /// use codecrafters_redis::store::Store;
     ///
-    /// let store = Store::new();
+    /// let store = Store::new(codecrafters_redis::config::Config::default());
     /// store.set("key1".to_string(), "value1".to_string());
     /// assert_eq!(store.delete("key1"), true);
     /// assert_eq!(store.delete("key1"), false);
@@ -166,7 +168,7 @@ impl<V: Clone> Store<V> {
     /// ```
     /// use codecrafters_redis::store::Store;
     ///
-    /// let store = Store::new();
+    /// let store = Store::new(codecrafters_redis::config::Config::default());
     /// store.set("key1".to_string(), "value1".to_string());
     /// assert_eq!(store.exists("key1"), true);
     /// assert_eq!(store.exists("nonexistent"), false);
@@ -192,7 +194,7 @@ impl<V: Clone> Store<V> {
     /// use std::time::Duration;
     /// use std::thread;
     ///
-    /// let store = Store::new();
+    /// let store = Store::new(codecrafters_redis::config::Config::default());
     /// store.set_with_expiration("key1".to_string(), "value1".to_string(), Duration::from_millis(50));
     /// store.set_with_expiration("key2".to_string(), "value2".to_string(), Duration::from_millis(50));
     /// thread::sleep(Duration::from_millis(100));
@@ -212,7 +214,7 @@ impl<V: Clone> Store<V> {
     /// ```
     /// use codecrafters_redis::store::Store;
     ///
-    /// let store = Store::new();
+    /// let store = Store::new(codecrafters_redis::config::Config::default());
     /// store.set("key1".to_string(), "value1".to_string());
     /// store.set("key2".to_string(), "value2".to_string());
     /// assert_eq!(store.len(), 2);
@@ -228,7 +230,7 @@ impl<V: Clone> Store<V> {
     /// ```
     /// use codecrafters_redis::store::Store;
     ///
-    /// let store = Store::new();
+    /// let store = Store::new(codecrafters_redis::config::Config::default());
     /// assert!(store.is_empty());
     /// store.set("key1".to_string(), "value1".to_string());
     /// assert!(!store.is_empty());
@@ -243,7 +245,7 @@ impl<V: Clone> Store<V> {
     /// ```
     /// use codecrafters_redis::store::Store;
     ///
-    /// let store = Store::new();
+    /// let store = Store::new(codecrafters_redis::config::Config::default());
     /// store.set("key1".to_string(), "value1".to_string());
     /// store.set("key2".to_string(), "value2".to_string());
     /// store.clear();
@@ -257,7 +259,7 @@ impl<V: Clone> Store<V> {
 
 impl<V: Clone> Default for Store<V> {
     fn default() -> Self {
-        Self::new()
+        Self::new(Config::default())
     }
 }
 
@@ -399,14 +401,14 @@ mod tests {
 
     // Helper function to create a store with a string value
     fn store_with_string(key: &str, value: &str) -> Store {
-        let store = Store::new();
+        let store = Store::new(Config::default());
         store.set_string(key.to_string(), value.to_string());
         store
     }
 
     // Helper function to create a store with a list value
     fn store_with_list(key: &str, values: Vec<&str>) -> Store {
-        let store = Store::new();
+        let store = Store::new(Config::default());
         for value in values {
             store.rpush(key.to_string(), value.to_string());
         }
@@ -415,20 +417,20 @@ mod tests {
 
     #[test]
     fn test_set_and_get() {
-        let store = Store::new();
+        let store = Store::new(Config::default());
         store.set_string("key1".to_string(), "value1".to_string());
         assert_eq!(store.get_string("key1"), Some("value1".to_string()));
     }
 
     #[test]
     fn test_get_nonexistent() {
-        let store = Store::new();
+        let store = Store::new(Config::default());
         assert_eq!(store.get_string("nonexistent"), None);
     }
 
     #[test]
     fn test_overwrite() {
-        let store = Store::new();
+        let store = Store::new(Config::default());
         store.set_string("key1".to_string(), "value1".to_string());
         store.set_string("key1".to_string(), "value2".to_string());
         assert_eq!(store.get_string("key1"), Some("value2".to_string()));
@@ -436,7 +438,7 @@ mod tests {
 
     #[test]
     fn test_delete() {
-        let store = Store::new();
+        let store = Store::new(Config::default());
         store.set_string("key1".to_string(), "value1".to_string());
         assert!(store.delete("key1"));
         assert!(store.get_string("key1").is_none());
@@ -445,7 +447,7 @@ mod tests {
 
     #[test]
     fn test_exists() {
-        let store = Store::new();
+        let store = Store::new(Config::default());
         assert!(!store.exists("key1"));
         store.set_string("key1".to_string(), "value1".to_string());
         assert!(store.exists("key1"));
@@ -455,7 +457,7 @@ mod tests {
 
     #[test]
     fn test_expiration() {
-        let store = Store::new();
+        let store = Store::new(Config::default());
         store.set_string_with_expiration(
             "key1".to_string(),
             "value1".to_string(),
@@ -468,7 +470,7 @@ mod tests {
 
     #[test]
     fn test_expiration_with_exists() {
-        let store = Store::new();
+        let store = Store::new(Config::default());
         store.set_string_with_expiration(
             "key1".to_string(),
             "value1".to_string(),
@@ -481,7 +483,7 @@ mod tests {
 
     #[test]
     fn test_no_expiration() {
-        let store = Store::new();
+        let store = Store::new(Config::default());
         store.set_string("key1".to_string(), "value1".to_string());
         thread::sleep(Duration::from_millis(100));
         assert_eq!(store.get_string("key1"), Some("value1".to_string()));
@@ -489,7 +491,7 @@ mod tests {
 
     #[test]
     fn test_cleanup_expired() {
-        let store = Store::new();
+        let store = Store::new(Config::default());
         store.set_string_with_expiration(
             "key1".to_string(),
             "value1".to_string(),
@@ -509,7 +511,7 @@ mod tests {
 
     #[test]
     fn test_len() {
-        let store = Store::new();
+        let store = Store::new(Config::default());
         assert_eq!(store.len(), 0);
         store.set_string("key1".to_string(), "value1".to_string());
         assert_eq!(store.len(), 1);
@@ -519,7 +521,7 @@ mod tests {
 
     #[test]
     fn test_len_with_expired() {
-        let store = Store::new();
+        let store = Store::new(Config::default());
         store.set_string_with_expiration(
             "key1".to_string(),
             "value1".to_string(),
@@ -533,7 +535,7 @@ mod tests {
 
     #[test]
     fn test_is_empty() {
-        let store = Store::new();
+        let store = Store::new(Config::default());
         assert!(store.is_empty());
         store.set_string("key1".to_string(), "value1".to_string());
         assert!(!store.is_empty());
@@ -541,7 +543,7 @@ mod tests {
 
     #[test]
     fn test_clear() {
-        let store = Store::new();
+        let store = Store::new(Config::default());
         store.set_string("key1".to_string(), "value1".to_string());
         store.set_string("key2".to_string(), "value2".to_string());
         store.clear();
@@ -551,7 +553,7 @@ mod tests {
 
     #[test]
     fn test_concurrent_reads() {
-        let store = Store::new();
+        let store = Store::new(Config::default());
         store.set_string("key1".to_string(), "value1".to_string());
 
         let handles: Vec<_> = (0..10)
@@ -570,7 +572,7 @@ mod tests {
 
     #[test]
     fn test_concurrent_writes() {
-        let store = Store::new();
+        let store = Store::new(Config::default());
 
         let handles: Vec<_> = (0..10)
             .map(|i| {
@@ -595,7 +597,7 @@ mod tests {
 
     #[test]
     fn test_concurrent_mixed_operations() {
-        let store = Store::new();
+        let store = Store::new(Config::default());
         store.set_string("shared".to_string(), "initial".to_string());
 
         let handles: Vec<_> = (0..20)
@@ -620,7 +622,7 @@ mod tests {
 
     #[test]
     fn test_overwrite_removes_expiration() {
-        let store = Store::new();
+        let store = Store::new(Config::default());
         store.set_string_with_expiration(
             "key1".to_string(),
             "value1".to_string(),
@@ -635,7 +637,7 @@ mod tests {
 
     #[test]
     fn test_overwrite_with_new_expiration() {
-        let store = Store::new();
+        let store = Store::new(Config::default());
         store.set_string_with_expiration(
             "key1".to_string(),
             "value1".to_string(),
@@ -656,7 +658,7 @@ mod tests {
     // List operation tests
     #[test]
     fn test_rpush_creates_list() {
-        let store = Store::new();
+        let store = Store::new(Config::default());
         let len = store.rpush("mylist".to_string(), "first".to_string());
         assert_eq!(len, 1);
     }
@@ -685,7 +687,7 @@ mod tests {
 
     #[test]
     fn test_rpop_nonexistent_key() {
-        let store = Store::new();
+        let store = Store::new(Config::default());
         assert_eq!(store.rpop("nonexistent"), None);
     }
 
@@ -697,7 +699,7 @@ mod tests {
 
     #[test]
     fn test_llen_nonexistent_key() {
-        let store = Store::new();
+        let store = Store::new(Config::default());
         assert_eq!(store.llen("nonexistent"), 0);
     }
 
@@ -771,7 +773,7 @@ mod tests {
 
     #[test]
     fn test_list_expiration() {
-        let store = Store::new();
+        let store = Store::new(Config::default());
         store.rpush("templist".to_string(), "value".to_string());
 
         // Manually set expiration on the list entry
@@ -789,7 +791,7 @@ mod tests {
 
     #[test]
     fn test_concurrent_list_operations() {
-        let store = Store::new();
+        let store = Store::new(Config::default());
         store.rpush("shared".to_string(), "initial".to_string());
 
         let handles: Vec<_> = (0..10)

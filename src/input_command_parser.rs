@@ -253,7 +253,10 @@ fn parse_error(cursor: &mut Cursor<&[u8]>) -> Result<Option<Box<dyn RedisDataTyp
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::{DataType, Store};
+    use crate::{
+        config::Config,
+        store::{DataType, Store},
+    };
 
     fn redis_array_of_bulk_strings(strs: Vec<&str>) -> Vec<u8> {
         let mut result = Vec::new();
@@ -313,7 +316,7 @@ mod tests {
 
     #[test]
     fn test_rpush_single_value() -> Result<()> {
-        let store = Store::new();
+        let store = Store::new(Config::default());
         let response = execute_command(vec!["rpush", "mykey", "value"], &store)?;
         assert_eq!(response, b":1\r\n");
         assert_list_value(&store, "mykey", vec!["value"]);
@@ -322,7 +325,7 @@ mod tests {
 
     #[test]
     fn test_rpush_multiple_values() -> Result<()> {
-        let store = Store::new();
+        let store = Store::new(Config::default());
         execute_command(vec!["rpush", "mykey", "value"], &store)?;
         let response = execute_command(vec!["rpush", "mykey", "one", "two"], &store)?;
         assert_eq!(response, b":3\r\n");
@@ -332,7 +335,7 @@ mod tests {
 
     #[test]
     fn test_rpush_multiple_values_at_once() -> Result<()> {
-        let store = Store::new();
+        let store = Store::new(Config::default());
         let response = execute_command(vec!["rpush", "mylist", "a", "b", "c"], &store)?;
         assert_eq!(response, b":3\r\n");
         assert_list_value(&store, "mylist", vec!["a", "b", "c"]);
@@ -341,7 +344,7 @@ mod tests {
 
     #[test]
     fn test_rpop_from_list() -> Result<()> {
-        let store = Store::new();
+        let store = Store::new(Config::default());
         execute_command(vec!["rpush", "mykey", "one", "two", "three"], &store)?;
 
         let response = execute_command(vec!["rpop", "mykey"], &store)?;
@@ -352,7 +355,7 @@ mod tests {
 
     #[test]
     fn test_rpop_from_empty_list() -> Result<()> {
-        let store = Store::new();
+        let store = Store::new(Config::default());
         execute_command(vec!["rpush", "mykey", "only"], &store)?;
         execute_command(vec!["rpop", "mykey"], &store)?;
 
@@ -364,7 +367,7 @@ mod tests {
 
     #[test]
     fn test_rpop_nonexistent_key() -> Result<()> {
-        let store = Store::new();
+        let store = Store::new(Config::default());
         let response = execute_command(vec!["rpop", "nonexistent"], &store)?;
         assert_eq!(response, b"$-1\r\n"); // Null bulk string
         Ok(())
@@ -394,7 +397,7 @@ mod tests {
 
     #[test]
     fn test_list_string_type_separation() -> Result<()> {
-        let store = Store::new();
+        let store = Store::new(Config::default());
 
         // Set a string value
         execute_command(vec!["set", "mykey", "stringvalue"], &store)?;
@@ -409,7 +412,7 @@ mod tests {
 
     #[test]
     fn test_get_on_list_returns_none() -> Result<()> {
-        let store = Store::new();
+        let store = Store::new(Config::default());
         execute_command(vec!["rpush", "listkey", "value"], &store)?;
 
         // GET should return None for a list key
@@ -420,7 +423,7 @@ mod tests {
 
     #[test]
     fn test_multiple_rpop_operations() -> Result<()> {
-        let store = Store::new();
+        let store = Store::new(Config::default());
         execute_command(vec!["rpush", "stack", "first", "second", "third"], &store)?;
 
         let response1 = execute_command(vec!["rpop", "stack"], &store)?;
@@ -452,7 +455,7 @@ mod tests {
         );
 
         // Verify the command returns the expected PONG response
-        let store = Store::new();
+        let store = Store::new(Config::default());
         let response = command.unwrap().execute(&store)?;
         assert_eq!(response, b"+PONG\r\n");
 
@@ -539,7 +542,7 @@ mod tests {
         );
 
         // Verify the command returns the expected PONG response
-        let store = Store::new();
+        let store = Store::new(Config::default());
         let response = command.unwrap().execute(&store)?;
         assert_eq!(response, b"$3\r\nhey\r\n");
 
