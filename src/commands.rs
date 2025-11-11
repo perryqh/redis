@@ -194,6 +194,31 @@ mod tests {
 
     use super::*;
 
+    // Helper function to create a BulkString
+    fn bulk_string(s: &str) -> Box<dyn RedisDataType> {
+        Box::new(BulkString::new(s.to_string()))
+    }
+
+    // Helper function to create SET command args
+    fn set_command_args(key: &str, value: &str) -> Vec<Box<dyn RedisDataType>> {
+        vec![bulk_string(key), bulk_string(value)]
+    }
+
+    // Helper function to create SET command with expiration args
+    fn set_command_with_expiration(
+        key: &str,
+        value: &str,
+        option: &str,
+        ttl: &str,
+    ) -> Vec<Box<dyn RedisDataType>> {
+        vec![
+            bulk_string(key),
+            bulk_string(value),
+            bulk_string(option),
+            bulk_string(ttl),
+        ]
+    }
+
     #[test]
     fn test_ping_command() {
         let store = Store::new();
@@ -205,8 +230,7 @@ mod tests {
     #[test]
     fn test_echo_command() {
         let store = Store::new();
-        let bulk_string: Box<dyn RedisDataType> = Box::new(BulkString::new("Hello".to_string()));
-        let command = EchoCommand::new(&[bulk_string]);
+        let command = EchoCommand::new(&[bulk_string("Hello")]);
         let response = command.execute(&store).unwrap();
         assert_eq!(response, b"$5\r\nHello\r\n");
     }
@@ -214,10 +238,7 @@ mod tests {
     #[test]
     fn test_set_command_basic() {
         let store = Store::new();
-        let key: Box<dyn RedisDataType> = Box::new(BulkString::new("mykey".to_string()));
-        let value: Box<dyn RedisDataType> = Box::new(BulkString::new("myvalue".to_string()));
-
-        let command = SetCommand::new(&[key, value]).unwrap();
+        let command = SetCommand::new(&set_command_args("mykey", "myvalue")).unwrap();
         let response = command.execute(&store).unwrap();
 
         assert_eq!(response, b"+OK\r\n");
@@ -229,16 +250,12 @@ mod tests {
         let store = Store::new();
 
         // Set initial value
-        let key1: Box<dyn RedisDataType> = Box::new(BulkString::new("key1".to_string()));
-        let value1: Box<dyn RedisDataType> = Box::new(BulkString::new("value1".to_string()));
-        let command1 = SetCommand::new(&[key1, value1]).unwrap();
+        let command1 = SetCommand::new(&set_command_args("key1", "value1")).unwrap();
         command1.execute(&store).unwrap();
         assert_eq!(store.get_string("key1"), Some("value1".to_string()));
 
         // Overwrite with new value
-        let key2: Box<dyn RedisDataType> = Box::new(BulkString::new("key1".to_string()));
-        let value2: Box<dyn RedisDataType> = Box::new(BulkString::new("value2".to_string()));
-        let command2 = SetCommand::new(&[key2, value2]).unwrap();
+        let command2 = SetCommand::new(&set_command_args("key1", "value2")).unwrap();
         command2.execute(&store).unwrap();
         assert_eq!(store.get_string("key1"), Some("value2".to_string()));
     }
@@ -246,12 +263,13 @@ mod tests {
     #[test]
     fn test_set_command_with_ex_option() {
         let store = Store::new();
-        let key: Box<dyn RedisDataType> = Box::new(BulkString::new("tempkey".to_string()));
-        let value: Box<dyn RedisDataType> = Box::new(BulkString::new("tempvalue".to_string()));
-        let option: Box<dyn RedisDataType> = Box::new(BulkString::new("EX".to_string()));
-        let ttl: Box<dyn RedisDataType> = Box::new(BulkString::new("1".to_string())); // 1 second
-
-        let command = SetCommand::new(&[key, value, option, ttl]).unwrap();
+        let command = SetCommand::new(&set_command_with_expiration(
+            "tempkey",
+            "tempvalue",
+            "EX",
+            "1",
+        ))
+        .unwrap();
         let response = command.execute(&store).unwrap();
 
         assert_eq!(response, b"+OK\r\n");
@@ -265,12 +283,13 @@ mod tests {
     #[test]
     fn test_set_command_with_px_option() {
         let store = Store::new();
-        let key: Box<dyn RedisDataType> = Box::new(BulkString::new("tempkey2".to_string()));
-        let value: Box<dyn RedisDataType> = Box::new(BulkString::new("tempvalue2".to_string()));
-        let option: Box<dyn RedisDataType> = Box::new(BulkString::new("PX".to_string()));
-        let ttl: Box<dyn RedisDataType> = Box::new(BulkString::new("500".to_string())); // 500 milliseconds
-
-        let command = SetCommand::new(&[key, value, option, ttl]).unwrap();
+        let command = SetCommand::new(&set_command_with_expiration(
+            "tempkey2",
+            "tempvalue2",
+            "PX",
+            "500",
+        ))
+        .unwrap();
         let response = command.execute(&store).unwrap();
 
         assert_eq!(response, b"+OK\r\n");
@@ -284,12 +303,8 @@ mod tests {
     #[test]
     fn test_set_command_ex_lowercase() {
         let _store: Store = Store::new();
-        let key: Box<dyn RedisDataType> = Box::new(BulkString::new("key_ex".to_string()));
-        let value: Box<dyn RedisDataType> = Box::new(BulkString::new("val_ex".to_string()));
-        let option: Box<dyn RedisDataType> = Box::new(BulkString::new("ex".to_string())); // lowercase
-        let ttl: Box<dyn RedisDataType> = Box::new(BulkString::new("1".to_string()));
-
-        let command = SetCommand::new(&[key, value, option, ttl]).unwrap();
+        let command =
+            SetCommand::new(&set_command_with_expiration("key_ex", "val_ex", "ex", "1")).unwrap();
         assert!(command.ttl.is_some());
         assert_eq!(command.ttl.unwrap(), Duration::from_secs(1));
     }
@@ -297,23 +312,18 @@ mod tests {
     #[test]
     fn test_set_command_px_uppercase() {
         let _store: Store = Store::new();
-        let key: Box<dyn RedisDataType> = Box::new(BulkString::new("key_px".to_string()));
-        let value: Box<dyn RedisDataType> = Box::new(BulkString::new("val_px".to_string()));
-        let option: Box<dyn RedisDataType> = Box::new(BulkString::new("PX".to_string())); // uppercase
-        let ttl: Box<dyn RedisDataType> = Box::new(BulkString::new("1000".to_string()));
-
-        let command = SetCommand::new(&[key, value, option, ttl]).unwrap();
+        let command = SetCommand::new(&set_command_with_expiration(
+            "key_px", "val_px", "PX", "500",
+        ))
+        .unwrap();
         assert!(command.ttl.is_some());
-        assert_eq!(command.ttl.unwrap(), Duration::from_millis(1000));
+        assert_eq!(command.ttl.unwrap(), Duration::from_millis(500));
     }
 
     #[test]
     fn test_set_command_without_ttl() {
         let store = Store::new();
-        let key: Box<dyn RedisDataType> = Box::new(BulkString::new("persistent".to_string()));
-        let value: Box<dyn RedisDataType> = Box::new(BulkString::new("forever".to_string()));
-
-        let command = SetCommand::new(&[key, value]).unwrap();
+        let command = SetCommand::new(&set_command_args("persistent", "forever")).unwrap();
         assert!(command.ttl.is_none());
 
         command.execute(&store).unwrap();
@@ -325,18 +335,13 @@ mod tests {
     fn test_set_command_replaces_ttl() {
         let store = Store::new();
 
-        // Set with expiration
-        let key1: Box<dyn RedisDataType> = Box::new(BulkString::new("key_ttl".to_string()));
-        let value1: Box<dyn RedisDataType> = Box::new(BulkString::new("val1".to_string()));
-        let option1: Box<dyn RedisDataType> = Box::new(BulkString::new("PX".to_string()));
-        let ttl1: Box<dyn RedisDataType> = Box::new(BulkString::new("200".to_string()));
-        let command1 = SetCommand::new(&[key1, value1, option1, ttl1]).unwrap();
+        // Set with TTL
+        let command1 =
+            SetCommand::new(&set_command_with_expiration("key_ttl", "val1", "EX", "1")).unwrap();
         command1.execute(&store).unwrap();
 
-        // Overwrite without expiration
-        let key2: Box<dyn RedisDataType> = Box::new(BulkString::new("key_ttl".to_string()));
-        let value2: Box<dyn RedisDataType> = Box::new(BulkString::new("val2".to_string()));
-        let command2 = SetCommand::new(&[key2, value2]).unwrap();
+        // Overwrite without TTL
+        let command2 = SetCommand::new(&set_command_args("key_ttl", "val2")).unwrap();
         command2.execute(&store).unwrap();
 
         // Wait past original expiration time
@@ -350,8 +355,7 @@ mod tests {
         let store = Store::new();
         store.set_string("existing".to_string(), "value".to_string());
 
-        let key: Box<dyn RedisDataType> = Box::new(BulkString::new("existing".to_string()));
-        let command = GetCommand::new(&[key]).unwrap();
+        let command = GetCommand::new(&[bulk_string("existing")]).unwrap();
         let response = command.execute(&store).unwrap();
 
         assert_eq!(response, b"$5\r\nvalue\r\n");
@@ -361,8 +365,7 @@ mod tests {
     fn test_get_command_nonexistent_key() {
         let store = Store::new();
 
-        let key: Box<dyn RedisDataType> = Box::new(BulkString::new("nonexistent".to_string()));
-        let command = GetCommand::new(&[key]).unwrap();
+        let command = GetCommand::new(&[bulk_string("nonexistent")]).unwrap();
         let response = command.execute(&store).unwrap();
 
         assert_eq!(response, b"$-1\r\n"); // Null bulk string
@@ -380,8 +383,7 @@ mod tests {
         // Wait for expiration
         thread::sleep(Duration::from_millis(100));
 
-        let key: Box<dyn RedisDataType> = Box::new(BulkString::new("expired".to_string()));
-        let command = GetCommand::new(&[key]).unwrap();
+        let command = GetCommand::new(&[bulk_string("expired")]).unwrap();
         let response = command.execute(&store).unwrap();
 
         assert_eq!(response, b"$-1\r\n"); // Should return null for expired key
@@ -508,5 +510,83 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("Invalid TTL value"));
+    }
+    // RPUSH command tests
+    #[test]
+    fn test_rpush_command_single_value() {
+        let store = Store::new();
+        let command = RpushCommand::new(&[bulk_string("mylist"), bulk_string("value1")]).unwrap();
+        let response = command.execute(&store).unwrap();
+        assert_eq!(response, b":1\r\n");
+    }
+
+    #[test]
+    fn test_rpush_command_multiple_values() {
+        let store = Store::new();
+        let command = RpushCommand::new(&[
+            bulk_string("mylist"),
+            bulk_string("a"),
+            bulk_string("b"),
+            bulk_string("c"),
+        ])
+        .unwrap();
+        let response = command.execute(&store).unwrap();
+        assert_eq!(response, b":3\r\n");
+    }
+
+    #[test]
+    fn test_rpush_command_append() {
+        let store = Store::new();
+        store.rpush("mylist".to_string(), "existing".to_string());
+        let command = RpushCommand::new(&[bulk_string("mylist"), bulk_string("new")]).unwrap();
+        let response = command.execute(&store).unwrap();
+        assert_eq!(response, b":2\r\n");
+    }
+
+    #[test]
+    fn test_rpush_command_missing_value() {
+        let result = RpushCommand::new(&[bulk_string("mylist")]);
+        assert!(result.is_err());
+    }
+
+    // RPOP command tests
+    #[test]
+    fn test_rpop_command_existing_list() {
+        let store = Store::new();
+        store.rpush("mylist".to_string(), "value1".to_string());
+        store.rpush("mylist".to_string(), "value2".to_string());
+
+        let command = RpopCommand::new(&[bulk_string("mylist")]).unwrap();
+        let response = command.execute(&store).unwrap();
+        assert_eq!(response, b"$6\r\nvalue2\r\n");
+    }
+
+    #[test]
+    fn test_rpop_command_nonexistent_key() {
+        let store = Store::new();
+        let command = RpopCommand::new(&[bulk_string("nonexistent")]).unwrap();
+        let response = command.execute(&store).unwrap();
+        assert_eq!(response, b"$-1\r\n");
+    }
+
+    #[test]
+    fn test_rpop_command_empty_list() {
+        let store = Store::new();
+        store.rpush("mylist".to_string(), "only".to_string());
+        store.rpop("mylist");
+
+        let command = RpopCommand::new(&[bulk_string("mylist")]).unwrap();
+        let response = command.execute(&store).unwrap();
+        assert_eq!(response, b"$-1\r\n");
+    }
+
+    #[test]
+    fn test_rpop_command_on_string_key() {
+        let store = Store::new();
+        store.set_string("stringkey".to_string(), "value".to_string());
+
+        let command = RpopCommand::new(&[bulk_string("stringkey")]).unwrap();
+        let response = command.execute(&store).unwrap();
+        assert_eq!(response, b"$-1\r\n"); // Wrong type
     }
 }

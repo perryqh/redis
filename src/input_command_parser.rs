@@ -256,10 +256,15 @@ mod tests {
     use crate::store::{DataType, Store};
 
     fn redis_array_of_bulk_strings(strs: Vec<&str>) -> Vec<u8> {
-        let mut result = vec![b'*', strs.len().to_string().as_bytes()[0], b'\r', b'\n'];
+        let mut result = Vec::new();
+        result.push(b'*');
+        result.extend_from_slice(strs.len().to_string().as_bytes());
+        result.extend_from_slice(b"\r\n");
 
         for s in strs {
-            result.extend_from_slice(&[b'$', s.len().to_string().as_bytes()[0], b'\r', b'\n']);
+            result.push(b'$');
+            result.extend_from_slice(s.len().to_string().as_bytes());
+            result.extend_from_slice(b"\r\n");
             result.extend_from_slice(s.as_bytes());
             result.extend_from_slice(b"\r\n");
         }
@@ -267,75 +272,169 @@ mod tests {
         result
     }
 
+    // Helper function to execute a command from string arguments
+    fn execute_command(args: Vec<&str>, store: &Store) -> Result<Vec<u8>> {
+        let data = redis_array_of_bulk_strings(args);
+        let mut cursor = Cursor::new(data.as_ref());
+        let command = parse_command(&mut cursor)?
+            .ok_or_else(|| anyhow::anyhow!("Failed to parse command"))?;
+        command.execute(store)
+    }
+
+    // Helper function to assert a list value in the store
+    fn assert_list_value(store: &Store, key: &str, expected: Vec<&str>) {
+        match store.get(key) {
+            Some(DataType::List(list)) => {
+                assert_eq!(list, expected, "List values don't match");
+            }
+            Some(DataType::String(_)) => {
+                panic!("Expected list but got string for key '{}'", key);
+            }
+            None => {
+                panic!("Expected list but key '{}' not found", key);
+            }
+        }
+    }
+
+    // Helper function to assert a string value in the store
+    fn assert_string_value(store: &Store, key: &str, expected: &str) {
+        match store.get(key) {
+            Some(DataType::String(s)) => {
+                assert_eq!(s, expected, "String values don't match");
+            }
+            Some(DataType::List(_)) => {
+                panic!("Expected string but got list for key '{}'", key);
+            }
+            None => {
+                panic!("Expected string but key '{}' not found", key);
+            }
+        }
+    }
+
     #[test]
-    fn test_rpush_pop() -> Result<()> {
-        let data = redis_array_of_bulk_strings(vec!["rpush", "mykey", "value"]);
-        let mut cursor = Cursor::new(data.as_ref());
-        let command = parse_command(&mut cursor)?;
-        assert!(
-            command.is_some(),
-            "Expected to parse rpush command from array"
-        );
+    fn test_rpush_single_value() -> Result<()> {
         let store = Store::new();
-        let response = command.unwrap().execute(&store)?;
+        let response = execute_command(vec!["rpush", "mykey", "value"], &store)?;
         assert_eq!(response, b":1\r\n");
-        match store.get("mykey") {
-            Some(value) => match value {
-                DataType::String(_s) => {
-                    panic!("Expected to get vec!<String> value")
-                }
-                DataType::List(list) => {
-                    assert_eq!(list, vec!["value"]);
-                }
-            },
-            _ => panic!("Expected to get value from store"),
-        }
+        assert_list_value(&store, "mykey", vec!["value"]);
+        Ok(())
+    }
 
-        let data = redis_array_of_bulk_strings(vec!["rpush", "mykey", "one", "two"]);
-        let mut cursor = Cursor::new(data.as_ref());
-        let command = parse_command(&mut cursor)?;
-        assert!(
-            command.is_some(),
-            "Expected to parse rpush command from array"
-        );
-        let response = command.unwrap().execute(&store)?;
+    #[test]
+    fn test_rpush_multiple_values() -> Result<()> {
+        let store = Store::new();
+        execute_command(vec!["rpush", "mykey", "value"], &store)?;
+        let response = execute_command(vec!["rpush", "mykey", "one", "two"], &store)?;
         assert_eq!(response, b":3\r\n");
+        assert_list_value(&store, "mykey", vec!["value", "one", "two"]);
+        Ok(())
+    }
 
-        match store.get("mykey") {
-            Some(value) => match value {
-                DataType::String(_s) => {
-                    panic!("Expected to get vec!<String> value")
-                }
-                DataType::List(list) => {
-                    assert_eq!(list, vec!["value", "one", "two"]);
-                }
-            },
-            _ => panic!("Expected to get value from store"),
-        }
-        let data = redis_array_of_bulk_strings(vec!["rpop", "mykey"]);
+    #[test]
+    fn test_rpush_multiple_values_at_once() -> Result<()> {
+        let store = Store::new();
+        let response = execute_command(vec!["rpush", "mylist", "a", "b", "c"], &store)?;
+        assert_eq!(response, b":3\r\n");
+        assert_list_value(&store, "mylist", vec!["a", "b", "c"]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_rpop_from_list() -> Result<()> {
+        let store = Store::new();
+        execute_command(vec!["rpush", "mykey", "one", "two", "three"], &store)?;
+
+        let response = execute_command(vec!["rpop", "mykey"], &store)?;
+        assert_eq!(response, b"$5\r\nthree\r\n");
+        assert_list_value(&store, "mykey", vec!["one", "two"]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_rpop_from_empty_list() -> Result<()> {
+        let store = Store::new();
+        execute_command(vec!["rpush", "mykey", "only"], &store)?;
+        execute_command(vec!["rpop", "mykey"], &store)?;
+
+        // Pop from now-empty list
+        let response = execute_command(vec!["rpop", "mykey"], &store)?;
+        assert_eq!(response, b"$-1\r\n"); // Null bulk string
+        Ok(())
+    }
+
+    #[test]
+    fn test_rpop_nonexistent_key() -> Result<()> {
+        let store = Store::new();
+        let response = execute_command(vec!["rpop", "nonexistent"], &store)?;
+        assert_eq!(response, b"$-1\r\n"); // Null bulk string
+        Ok(())
+    }
+
+    #[test]
+    fn test_rpush_missing_value() -> Result<()> {
+        let data = redis_array_of_bulk_strings(vec!["rpush", "mykey"]);
+        let mut cursor = Cursor::new(data.as_ref());
+        let result = parse_command(&mut cursor);
+
+        // Should fail to parse because RPUSH requires at least one value
+        assert!(result.is_err() || result.unwrap().is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn test_rpop_missing_key() -> Result<()> {
+        let data = redis_array_of_bulk_strings(vec!["rpop"]);
         let mut cursor = Cursor::new(data.as_ref());
         let command = parse_command(&mut cursor)?;
-        assert!(
-            command.is_some(),
-            "Expected to parse rpop command from array"
-        );
-        let response = command.unwrap().execute(&store)?;
-        assert_eq!(response, b"$3\r\ntwo\r\n");
 
-        let mut cursor = Cursor::new(data.as_ref());
-        let command = parse_command(&mut cursor)?;
-        let response = command.unwrap().execute(&store)?;
-        assert_eq!(response, b"$3\r\none\r\n");
+        // Should not parse with missing key
+        assert!(command.is_none());
+        Ok(())
+    }
 
-        let mut cursor = Cursor::new(data.as_ref());
-        let command = parse_command(&mut cursor)?;
-        let response = command.unwrap().execute(&store)?;
-        assert_eq!(response, b"$5\r\nvalue\r\n");
+    #[test]
+    fn test_list_string_type_separation() -> Result<()> {
+        let store = Store::new();
 
-        let mut cursor = Cursor::new(data.as_ref());
-        let command = parse_command(&mut cursor)?;
-        let response = command.unwrap().execute(&store)?;
-        assert_eq!(response, b"$-1\r\n");
+        // Set a string value
+        execute_command(vec!["set", "mykey", "stringvalue"], &store)?;
+        assert_string_value(&store, "mykey", "stringvalue");
+
+        // RPUSH should replace the string with a list
+        execute_command(vec!["rpush", "mykey", "listvalue"], &store)?;
+        assert_list_value(&store, "mykey", vec!["listvalue"]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_get_on_list_returns_none() -> Result<()> {
+        let store = Store::new();
+        execute_command(vec!["rpush", "listkey", "value"], &store)?;
+
+        // GET should return None for a list key
+        let response = execute_command(vec!["get", "listkey"], &store)?;
+        assert_eq!(response, b"$-1\r\n"); // Null bulk string
+        Ok(())
+    }
+
+    #[test]
+    fn test_multiple_rpop_operations() -> Result<()> {
+        let store = Store::new();
+        execute_command(vec!["rpush", "stack", "first", "second", "third"], &store)?;
+
+        let response1 = execute_command(vec!["rpop", "stack"], &store)?;
+        assert_eq!(response1, b"$5\r\nthird\r\n");
+
+        let response2 = execute_command(vec!["rpop", "stack"], &store)?;
+        assert_eq!(response2, b"$6\r\nsecond\r\n");
+
+        let response3 = execute_command(vec!["rpop", "stack"], &store)?;
+        assert_eq!(response3, b"$5\r\nfirst\r\n");
+
+        let response4 = execute_command(vec!["rpop", "stack"], &store)?;
+        assert_eq!(response4, b"$-1\r\n"); // Empty now
+
         Ok(())
     }
 

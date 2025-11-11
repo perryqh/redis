@@ -397,6 +397,22 @@ mod tests {
     use super::*;
     use std::thread;
 
+    // Helper function to create a store with a string value
+    fn store_with_string(key: &str, value: &str) -> Store {
+        let store = Store::new();
+        store.set_string(key.to_string(), value.to_string());
+        store
+    }
+
+    // Helper function to create a store with a list value
+    fn store_with_list(key: &str, values: Vec<&str>) -> Store {
+        let store = Store::new();
+        for value in values {
+            store.rpush(key.to_string(), value.to_string());
+        }
+        store
+    }
+
     #[test]
     fn test_set_and_get() {
         let store = Store::new();
@@ -635,5 +651,160 @@ mod tests {
         assert_eq!(store.get_string("key1"), Some("value2".to_string()));
         thread::sleep(Duration::from_millis(80)); // Total 150ms
         assert_eq!(store.get_string("key1"), None);
+    }
+
+    // List operation tests
+    #[test]
+    fn test_rpush_creates_list() {
+        let store = Store::new();
+        let len = store.rpush("mylist".to_string(), "first".to_string());
+        assert_eq!(len, 1);
+    }
+
+    #[test]
+    fn test_rpush_appends_to_list() {
+        let store = store_with_list("mylist", vec!["first", "second"]);
+        let len = store.rpush("mylist".to_string(), "third".to_string());
+        assert_eq!(len, 3);
+    }
+
+    #[test]
+    fn test_rpop_removes_last_element() {
+        let store = store_with_list("mylist", vec!["first", "second", "third"]);
+        assert_eq!(store.rpop("mylist"), Some("third".to_string()));
+        assert_eq!(store.rpop("mylist"), Some("second".to_string()));
+        assert_eq!(store.rpop("mylist"), Some("first".to_string()));
+    }
+
+    #[test]
+    fn test_rpop_empty_list() {
+        let store = store_with_list("mylist", vec!["only"]);
+        store.rpop("mylist");
+        assert_eq!(store.rpop("mylist"), None);
+    }
+
+    #[test]
+    fn test_rpop_nonexistent_key() {
+        let store = Store::new();
+        assert_eq!(store.rpop("nonexistent"), None);
+    }
+
+    #[test]
+    fn test_llen_returns_length() {
+        let store = store_with_list("mylist", vec!["a", "b", "c"]);
+        assert_eq!(store.llen("mylist"), 3);
+    }
+
+    #[test]
+    fn test_llen_nonexistent_key() {
+        let store = Store::new();
+        assert_eq!(store.llen("nonexistent"), 0);
+    }
+
+    #[test]
+    fn test_lrange_full_list() {
+        let store = store_with_list("mylist", vec!["a", "b", "c", "d"]);
+        let result = store.lrange("mylist", 0, -1);
+        assert_eq!(result, vec!["a", "b", "c", "d"]);
+    }
+
+    #[test]
+    fn test_lrange_partial() {
+        let store = store_with_list("mylist", vec!["a", "b", "c", "d", "e"]);
+        let result = store.lrange("mylist", 1, 3);
+        assert_eq!(result, vec!["b", "c", "d"]);
+    }
+
+    #[test]
+    fn test_lrange_negative_indices() {
+        let store = store_with_list("mylist", vec!["a", "b", "c", "d"]);
+        let result = store.lrange("mylist", -3, -1);
+        assert_eq!(result, vec!["b", "c", "d"]);
+    }
+
+    #[test]
+    fn test_lrange_out_of_bounds() {
+        let store = store_with_list("mylist", vec!["a", "b"]);
+        let result = store.lrange("mylist", 5, 10);
+        assert_eq!(result, Vec::<String>::new());
+    }
+
+    #[test]
+    fn test_type_separation_string_to_list() {
+        let store = store_with_string("mykey", "stringvalue");
+        assert_eq!(store.get_string("mykey"), Some("stringvalue".to_string()));
+
+        // RPUSH replaces string with list
+        store.rpush("mykey".to_string(), "listvalue".to_string());
+        assert_eq!(store.get_string("mykey"), None); // String getter returns None
+        assert_eq!(store.llen("mykey"), 1);
+    }
+
+    #[test]
+    fn test_type_separation_list_to_string() {
+        let store = store_with_list("mykey", vec!["a", "b"]);
+        assert_eq!(store.llen("mykey"), 2);
+
+        // SET replaces list with string
+        store.set_string("mykey".to_string(), "newstring".to_string());
+        assert_eq!(store.get_string("mykey"), Some("newstring".to_string()));
+        assert_eq!(store.llen("mykey"), 0); // List length returns 0
+    }
+
+    #[test]
+    fn test_get_string_on_list_returns_none() {
+        let store = store_with_list("listkey", vec!["value"]);
+        assert_eq!(store.get_string("listkey"), None);
+    }
+
+    #[test]
+    fn test_rpop_on_string_returns_none() {
+        let store = store_with_string("stringkey", "value");
+        assert_eq!(store.rpop("stringkey"), None);
+    }
+
+    #[test]
+    fn test_llen_on_string_returns_zero() {
+        let store = store_with_string("stringkey", "value");
+        assert_eq!(store.llen("stringkey"), 0);
+    }
+
+    #[test]
+    fn test_list_expiration() {
+        let store = Store::new();
+        store.rpush("templist".to_string(), "value".to_string());
+
+        // Manually set expiration on the list entry
+        let mut map = store.inner.write().unwrap();
+        if let Some(entry) = map.get_mut("templist") {
+            entry.expires_at = Some(Instant::now() + Duration::from_millis(50));
+        }
+        drop(map);
+
+        assert_eq!(store.llen("templist"), 1);
+        thread::sleep(Duration::from_millis(100));
+        assert_eq!(store.llen("templist"), 0);
+        assert_eq!(store.rpop("templist"), None);
+    }
+
+    #[test]
+    fn test_concurrent_list_operations() {
+        let store = Store::new();
+        store.rpush("shared".to_string(), "initial".to_string());
+
+        let handles: Vec<_> = (0..10)
+            .map(|i| {
+                let store_clone = store.clone();
+                thread::spawn(move || {
+                    store_clone.rpush("shared".to_string(), format!("value{}", i));
+                })
+            })
+            .collect();
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        assert_eq!(store.llen("shared"), 11); // initial + 10 values
     }
 }
