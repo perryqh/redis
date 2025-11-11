@@ -2,7 +2,9 @@ use std::io::{Cursor, Read};
 
 use anyhow::Result;
 
-use crate::commands::{EchoCommand, GetCommand, PingCommand, RedisCommand, SetCommand};
+use crate::commands::{
+    EchoCommand, GetCommand, PingCommand, RedisCommand, RpopCommand, RpushCommand, SetCommand,
+};
 use crate::datatypes::{Array, BulkString, Integer, RedisDataType, SimpleError, SimpleString};
 
 /// Parse a Redis data type from the cursor
@@ -46,6 +48,14 @@ pub fn parse_command(cursor: &mut Cursor<&[u8]>) -> Result<Option<Box<dyn RedisC
                         "GET" if array.values.len() >= 2 => {
                             let get_command = GetCommand::new(&array.values[1..])?;
                             return Ok(Some(Box::new(get_command)));
+                        }
+                        "RPUSH" if array.values.len() >= 3 => {
+                            let rpush_command = RpushCommand::new(&array.values[1..])?;
+                            return Ok(Some(Box::new(rpush_command)));
+                        }
+                        "RPOP" if array.values.len() >= 2 => {
+                            let rpop_command = RpopCommand::new(&array.values[1..])?;
+                            return Ok(Some(Box::new(rpop_command)));
                         }
                         _ => {}
                     }
@@ -243,7 +253,7 @@ fn parse_error(cursor: &mut Cursor<&[u8]>) -> Result<Option<Box<dyn RedisDataTyp
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::Store;
+    use crate::store::{DataType, Store};
 
     fn redis_array_of_bulk_strings(strs: Vec<&str>) -> Vec<u8> {
         let mut result = vec![b'*', strs.len().to_string().as_bytes()[0], b'\r', b'\n'];
@@ -255,6 +265,78 @@ mod tests {
         }
 
         result
+    }
+
+    #[test]
+    fn test_rpush_pop() -> Result<()> {
+        let data = redis_array_of_bulk_strings(vec!["rpush", "mykey", "value"]);
+        let mut cursor = Cursor::new(data.as_ref());
+        let command = parse_command(&mut cursor)?;
+        assert!(
+            command.is_some(),
+            "Expected to parse rpush command from array"
+        );
+        let store = Store::new();
+        let response = command.unwrap().execute(&store)?;
+        assert_eq!(response, b":1\r\n");
+        match store.get("mykey") {
+            Some(value) => match value {
+                DataType::String(_s) => {
+                    panic!("Expected to get vec!<String> value")
+                }
+                DataType::List(list) => {
+                    assert_eq!(list, vec!["value"]);
+                }
+            },
+            _ => panic!("Expected to get value from store"),
+        }
+
+        let data = redis_array_of_bulk_strings(vec!["rpush", "mykey", "one", "two"]);
+        let mut cursor = Cursor::new(data.as_ref());
+        let command = parse_command(&mut cursor)?;
+        assert!(
+            command.is_some(),
+            "Expected to parse rpush command from array"
+        );
+        let response = command.unwrap().execute(&store)?;
+        assert_eq!(response, b":3\r\n");
+
+        match store.get("mykey") {
+            Some(value) => match value {
+                DataType::String(_s) => {
+                    panic!("Expected to get vec!<String> value")
+                }
+                DataType::List(list) => {
+                    assert_eq!(list, vec!["value", "one", "two"]);
+                }
+            },
+            _ => panic!("Expected to get value from store"),
+        }
+        let data = redis_array_of_bulk_strings(vec!["rpop", "mykey"]);
+        let mut cursor = Cursor::new(data.as_ref());
+        let command = parse_command(&mut cursor)?;
+        assert!(
+            command.is_some(),
+            "Expected to parse rpop command from array"
+        );
+        let response = command.unwrap().execute(&store)?;
+        assert_eq!(response, b"$3\r\ntwo\r\n");
+
+        let mut cursor = Cursor::new(data.as_ref());
+        let command = parse_command(&mut cursor)?;
+        let response = command.unwrap().execute(&store)?;
+        assert_eq!(response, b"$3\r\none\r\n");
+
+        let mut cursor = Cursor::new(data.as_ref());
+        let command = parse_command(&mut cursor)?;
+        let response = command.unwrap().execute(&store)?;
+        assert_eq!(response, b"$5\r\nvalue\r\n");
+
+        let mut cursor = Cursor::new(data.as_ref());
+        let command = parse_command(&mut cursor)?;
+        let response = command.unwrap().execute(&store)?;
+        assert_eq!(response, b"$-1\r\n");
+        Ok(())
     }
 
     #[test]
@@ -393,11 +475,6 @@ mod tests {
             "Expected second BulkString value to be 'hey'"
         );
 
-        Ok(())
-    }
-
-    #[test]
-    fn test_rpush_pop() -> Result<()> {
         Ok(())
     }
 

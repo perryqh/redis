@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use crate::{
-    datatypes::{BulkString, NullBulkString, RedisDataType, SimpleString},
+    datatypes::{BulkString, Integer, NullBulkString, RedisDataType, SimpleString},
     store::Store,
 };
 use anyhow::{bail, Context, Result};
@@ -46,6 +46,56 @@ impl EchoCommand {
 impl RedisCommand for EchoCommand {
     fn execute(&self, _store: &Store) -> Result<Vec<u8>> {
         BulkString::new(self.message.clone()).to_bytes()
+    }
+}
+
+pub struct RpushCommand {
+    pub key: String,
+    pub values: Vec<String>,
+}
+
+impl RpushCommand {
+    pub fn new(input_array: &[Box<dyn RedisDataType>]) -> Result<Self> {
+        let key = extract_bulk_string(input_array, 0, "key")?;
+        let mut values = Vec::new();
+        for i in 1..input_array.len() {
+            let value = extract_bulk_string(input_array, i, &format!("value{}", i))?;
+            values.push(value);
+        }
+        if values.is_empty() {
+            bail!("RPUSH requires at least one value");
+        }
+        Ok(RpushCommand { key, values })
+    }
+}
+
+impl RedisCommand for RpushCommand {
+    fn execute(&self, store: &Store) -> Result<Vec<u8>> {
+        let mut len = 0;
+        for value in &self.values {
+            len = store.rpush(self.key.clone(), value.clone());
+        }
+        Integer::new(len as i32).to_bytes()
+    }
+}
+
+pub struct RpopCommand {
+    pub key: String,
+}
+
+impl RpopCommand {
+    pub fn new(input_array: &[Box<dyn RedisDataType>]) -> Result<Self> {
+        let key = extract_bulk_string(input_array, 0, "key")?;
+        Ok(RpopCommand { key })
+    }
+}
+
+impl RedisCommand for RpopCommand {
+    fn execute(&self, store: &Store) -> Result<Vec<u8>> {
+        match store.rpop(&self.key) {
+            Some(value) => BulkString::new(value).to_bytes(),
+            None => NullBulkString {}.to_bytes(),
+        }
     }
 }
 
