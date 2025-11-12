@@ -34,4 +34,20 @@ mod tests {
 
         Ok(())
     }
+
+    fn fixture_bytes() -> Result<Vec<u8>> {
+        let file_path = "tests/fixtures/dump.rdb";
+        let bytes = std::fs::read(file_path)?;
+        Ok(bytes)
+    }
+
+    #[test]
+    fn test_fixture_bytes() -> Result<()> {
+        let bytes = fixture_bytes()?;
+        assert!(!bytes.is_empty());
+        let rdb = parse_rdb_file(bytes)?;
+        assert_eq!(rdb.version, "0012");
+
+        Ok(())
+    }
 }
