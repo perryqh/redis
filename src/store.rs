@@ -13,6 +13,12 @@ pub enum DataType {
     List(Vec<String>),
 }
 
+// pub enum ValueExpirationPolicy {
+//     None,
+//     EX(u64),
+//     PX(u64),
+// }
+
 /// A value stored in the key-value store with optional expiration
 #[derive(Clone, Debug)]
 pub struct StoreValue<V> {
@@ -22,7 +28,7 @@ pub struct StoreValue<V> {
 
 impl<V> StoreValue<V> {
     /// Creates a new value without expiration
-    fn new(data: V) -> Self {
+    pub fn new(data: V) -> Self {
         Self {
             data,
             expires_at: None,
