@@ -3,7 +3,8 @@ use std::io::{Cursor, Read};
 use anyhow::Result;
 
 use crate::commands::{
-    EchoCommand, GetCommand, PingCommand, RedisCommand, RpopCommand, RpushCommand, SetCommand,
+    ConfigCommand, EchoCommand, GetCommand, PingCommand, RedisCommand, RpopCommand, RpushCommand,
+    SetCommand,
 };
 use crate::datatypes::{Array, BulkString, Integer, RedisDataType, SimpleError, SimpleString};
 
@@ -56,6 +57,10 @@ pub fn parse_command(cursor: &mut Cursor<&[u8]>) -> Result<Option<Box<dyn RedisC
                         "RPOP" if array.values.len() >= 2 => {
                             let rpop_command = RpopCommand::new(&array.values[1..])?;
                             return Ok(Some(Box::new(rpop_command)));
+                        }
+                        "CONFIG" if array.values.len() >= 2 => {
+                            let config_command = ConfigCommand::new(&array.values[1..])?;
+                            return Ok(Some(Box::new(config_command)));
                         }
                         _ => {}
                     }

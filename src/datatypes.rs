@@ -41,6 +41,12 @@ pub struct Array {
     pub values: Vec<Box<dyn RedisDataType>>,
 }
 
+impl Array {
+    pub fn new(values: Vec<Box<dyn RedisDataType>>) -> Self {
+        Array { values }
+    }
+}
+
 // *-1\r\n
 #[derive(Debug)]
 pub struct NullArray {}
@@ -126,13 +132,15 @@ impl RedisDataType for SimpleString {
 
 impl RedisDataType for Array {
     fn to_bytes(&self) -> Result<Vec<u8>> {
-        // it might not make sense to implement to_bytes on datatypes because
-        // business logic might be different for each datatype
-        // Example: when should the response also be an array?
-        let mut bytes = vec![];
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"*");
+        bytes.extend_from_slice(format!("{}", self.values.len()).as_bytes());
+        bytes.extend_from_slice(b"\r\n");
+
         for value in &self.values {
-            bytes.extend(value.to_bytes()?);
+            bytes.extend_from_slice(&value.to_bytes()?);
         }
+
         Ok(bytes)
     }
 

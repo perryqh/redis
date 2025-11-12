@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use crate::{
     config::Config,
-    datatypes::{BulkString, Integer, NullBulkString, RedisDataType, SimpleString},
+    datatypes::{Array, BulkString, Integer, NullBulkString, RedisDataType, SimpleString},
     store::Store,
 };
 use anyhow::{bail, Context, Result};
@@ -204,6 +204,53 @@ impl RedisCommand for GetCommand {
     }
 }
 
+#[derive(Debug)]
+pub enum ConfigAction {
+    Get(Vec<String>),
+}
+
+#[derive(Debug)]
+pub struct ConfigCommand {
+    pub action: ConfigAction,
+}
+
+impl ConfigCommand {
+    pub fn new(input_array: &[Box<dyn RedisDataType>]) -> Result<Self> {
+        // Extract required arguments
+        let action = extract_bulk_string(input_array, 0, "action")?;
+        if action.to_uppercase() != "GET" {
+            bail!("Unsupported config action {}", action)
+        }
+        let key = extract_bulk_string(input_array, 1, "key")?;
+        Ok(Self {
+            action: ConfigAction::Get(vec![key]),
+        })
+    }
+}
+
+impl RedisCommand for ConfigCommand {
+    fn execute<'a>(&self, command_input: &'a CommandExecuteInput<'a>) -> Result<Vec<u8>> {
+        match self.action {
+            ConfigAction::Get(ref keys) => {
+                let mut values: Vec<Box<dyn RedisDataType>> = Vec::new();
+                for key in keys {
+                    values.push(Box::new(BulkString::new(key.clone())));
+                    match key.to_lowercase().as_str() {
+                        "dir" => {
+                            values.push(Box::new(BulkString::new(command_input.config.dir.clone())))
+                        }
+                        "dbfilename" => values.push(Box::new(BulkString::new(
+                            command_input.config.dbfilename.clone(),
+                        ))),
+                        _ => values.push(Box::new(NullBulkString {})),
+                    }
+                }
+                Array::new(values).to_bytes()
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::config::Config;
@@ -237,6 +284,23 @@ mod tests {
             bulk_string(option),
             bulk_string(ttl),
         ]
+    }
+
+    #[test]
+    fn test_config_get_command() -> Result<()> {
+        let store = Store::new();
+        let config = Config::default();
+        let command_input = CommandExecuteInput::new(&store, &config);
+        let command = ConfigCommand::new(&[bulk_string("GET"), bulk_string("dir")])?;
+        let response = command.execute(&command_input)?;
+        assert_eq!(response, b"*2\r\n$3\r\ndir\r\n$12\r\n~/redis-rust\r\n");
+
+        let command_input = CommandExecuteInput::new(&store, &config);
+        let command = ConfigCommand::new(&[bulk_string("GET"), bulk_string("dbfilename")])?;
+        let response = command.execute(&command_input)?;
+        assert_eq!(response, b"*2\r\n$10\r\ndbfilename\r\n$8\r\ndump.rdb\r\n");
+
+        Ok(())
     }
 
     #[test]
