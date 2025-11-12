@@ -258,8 +258,8 @@ fn parse_error(cursor: &mut Cursor<&[u8]>) -> Result<Option<Box<dyn RedisDataTyp
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::CommandExecuteInput;
     use crate::config::Config;
+    use crate::context::AppContext;
     use crate::store::{DataType, Store};
 
     fn redis_array_of_bulk_strings(strs: Vec<&str>) -> Vec<u8> {
@@ -286,8 +286,8 @@ mod tests {
         let command = parse_command(&mut cursor)?
             .ok_or_else(|| anyhow::anyhow!("Failed to parse command"))?;
         let config = Config::default();
-        let command_input = CommandExecuteInput::new(store, &config);
-        command.execute(&command_input)
+        let app_context = AppContext::new(store, &config);
+        command.execute(&app_context)
     }
 
     // Helper function to assert a list value in the store
@@ -463,8 +463,8 @@ mod tests {
         // Verify the command returns the expected PONG response
         let store = Store::new();
         let config = Config::default();
-        let command_input = CommandExecuteInput::new(&store, &config);
-        let response = command.unwrap().execute(&command_input)?;
+        let app_context = AppContext::new(&store, &config);
+        let response = command.unwrap().execute(&app_context)?;
         assert_eq!(response, b"+PONG\r\n");
 
         // Also test the data type parser directly
@@ -552,8 +552,8 @@ mod tests {
         // Verify the command returns the expected PONG response
         let store = Store::new();
         let config = Config::default();
-        let command_input = CommandExecuteInput::new(&store, &config);
-        let response = command.unwrap().execute(&command_input)?;
+        let app_context = AppContext::new(&store, &config);
+        let response = command.unwrap().execute(&app_context)?;
         assert_eq!(response, b"$3\r\nhey\r\n");
 
         // Also test the data type parser directly

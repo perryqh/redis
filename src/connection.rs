@@ -4,7 +4,7 @@ use anyhow::Result;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 
-use crate::commands::CommandExecuteInput;
+use crate::context::AppContext;
 use crate::resp::parse_command;
 
 /// Handles a single client connection
@@ -19,10 +19,10 @@ use crate::resp::parse_command;
 /// Returns an error if there's an I/O failure or command parsing error
 pub async fn handle_connection<'a>(
     mut socket: TcpStream,
-    command_input: &'a CommandExecuteInput<'a>,
+    app_context: &'a AppContext<'a>,
 ) -> Result<()> {
     let (reader, writer) = socket.split();
-    handle_connection_impl(reader, writer, command_input).await
+    handle_connection_impl(reader, writer, app_context).await
 }
 
 /// Generic connection handler that works with any async reader/writer
@@ -48,15 +48,15 @@ pub async fn handle_connection<'a>(
 /// use codecrafters_redis::connection::handle_connection_impl;
 /// use codecrafters_redis::store::Store;
 /// use codecrafters_redis::config::Config;
-/// use codecrafters_redis::commands::CommandExecuteInput;
+/// use codecrafters_redis::context::AppContext;
 ///
 /// # async fn example() -> anyhow::Result<()> {
 /// let store = Store::new();
 /// let config = Config::default();
-/// let command_input = CommandExecuteInput::new(&store, &config);
+/// let app_context = AppContext::new(&store, &config);
 /// let reader = Cursor::new(b"*1\r\n$4\r\nPING\r\n".to_vec());
 /// let mut writer = Vec::new();
-/// handle_connection_impl(reader, &mut writer, &command_input).await?;
+/// handle_connection_impl(reader, &mut writer, &app_context).await?;
 /// assert_eq!(writer, b"+PONG\r\n");
 /// # Ok(())
 /// # }
@@ -64,7 +64,7 @@ pub async fn handle_connection<'a>(
 pub async fn handle_connection_impl<'a, R, W>(
     mut reader: R,
     mut writer: W,
-    command_input: &'a CommandExecuteInput<'a>,
+    app_context: &'a AppContext<'a>,
 ) -> Result<()>
 where
     R: AsyncRead + Unpin,
@@ -84,7 +84,7 @@ where
         let mut cursor = Cursor::new(buffer.as_slice());
 
         while let Ok(Some(command)) = parse_command(&mut cursor) {
-            let response = command.execute(command_input)?;
+            let response = command.execute(app_context)?;
             writer.write_all(&response).await?;
             writer.flush().await?;
         }
@@ -111,10 +111,10 @@ mod tests {
         let reader = Cursor::new(ping_command());
         let store = Store::new();
         let config = Config::default();
-        let command_input = CommandExecuteInput::new(&store, &config);
+        let app_context = AppContext::new(&store, &config);
 
         // Call the generic handler
-        handle_connection_impl(reader, &mut writer, &command_input).await?;
+        handle_connection_impl(reader, &mut writer, &app_context).await?;
 
         // Verify the output
         assert_eq!(writer, b"+PONG\r\n");
@@ -133,10 +133,10 @@ mod tests {
         let mut writer = Vec::new();
         let store = Store::new();
         let config = Config::default();
-        let command_input = CommandExecuteInput::new(&store, &config);
+        let app_context = AppContext::new(&store, &config);
 
         // Call the generic handler
-        handle_connection_impl(reader, &mut writer, &command_input).await?;
+        handle_connection_impl(reader, &mut writer, &app_context).await?;
 
         // Verify the output
         assert_eq!(writer, input.expected_response);
@@ -168,12 +168,12 @@ mod tests {
     async fn test_set_get_commands() -> Result<()> {
         let store = Store::new();
         let config = Config::default();
-        let command_input = CommandExecuteInput::new(&store, &config);
+        let app_context = AppContext::new(&store, &config);
 
         // Test SET command
         let reader = Cursor::new(b"*3\r\n$3\r\nSET\r\n$4\r\ntaco\r\n$5\r\nsmell\r\n".to_vec());
         let mut writer = Vec::new();
-        handle_connection_impl(reader, &mut writer, &command_input).await?;
+        handle_connection_impl(reader, &mut writer, &app_context).await?;
         assert_eq!(writer, b"+OK\r\n".to_vec());
         assert_eq!(store.get_string("taco"), Some("smell".to_string()));
 
@@ -182,7 +182,7 @@ mod tests {
             b"*3\r\n$3\r\nSET\r\n$6\r\nphrase\r\n$28\r\nshould have been a rake task\r\n".to_vec(),
         );
         let mut writer = Vec::new();
-        handle_connection_impl(reader, &mut writer, &command_input).await?;
+        handle_connection_impl(reader, &mut writer, &app_context).await?;
         assert_eq!(writer, b"+OK\r\n".to_vec());
         assert_eq!(
             store.get_string("phrase"),
@@ -192,13 +192,13 @@ mod tests {
         // Test GET command for existing key
         let reader = Cursor::new(b"*2\r\n$3\r\nGET\r\n$6\r\nphrase\r\n".to_vec());
         let mut writer = Vec::new();
-        handle_connection_impl(reader, &mut writer, &command_input).await?;
+        handle_connection_impl(reader, &mut writer, &app_context).await?;
         assert_eq!(writer, b"$28\r\nshould have been a rake task\r\n".to_vec());
 
         // Test GET command for existing key
         let reader = Cursor::new(b"*2\r\n$3\r\nGET\r\n$4\r\ntaco\r\n".to_vec());
         let mut writer = Vec::new();
-        handle_connection_impl(reader, &mut writer, &command_input).await?;
+        handle_connection_impl(reader, &mut writer, &app_context).await?;
         assert_eq!(writer, b"$5\r\nsmell\r\n".to_vec());
 
         Ok(())
@@ -208,14 +208,14 @@ mod tests {
     async fn test_multiple_commands_in_buffer() -> Result<()> {
         let store = Store::new();
         let config = Config::default();
-        let command_input = CommandExecuteInput::new(&store, &config);
+        let app_context = AppContext::new(&store, &config);
 
         // Send multiple commands in one buffer
         let commands = b"*1\r\n$4\r\nPING\r\n*2\r\n$4\r\nECHO\r\n$5\r\nhello\r\n";
         let reader = Cursor::new(commands.to_vec());
         let mut writer = Vec::new();
 
-        handle_connection_impl(reader, &mut writer, &command_input).await?;
+        handle_connection_impl(reader, &mut writer, &app_context).await?;
 
         // Should receive both responses
         assert_eq!(writer, b"+PONG\r\n$5\r\nhello\r\n");
@@ -227,18 +227,18 @@ mod tests {
     async fn test_multiple_writer_types() -> Result<()> {
         let store = Store::new();
         let config = Config::default();
-        let command_input = CommandExecuteInput::new(&store, &config);
+        let app_context = AppContext::new(&store, &config);
 
         // Test with Vec<u8> as writer
         let reader1 = Cursor::new(ping_command());
         let mut buffer1 = Vec::new();
-        handle_connection_impl(reader1, &mut buffer1, &command_input).await?;
+        handle_connection_impl(reader1, &mut buffer1, &app_context).await?;
         assert_eq!(buffer1, b"+PONG\r\n");
 
         // Test with Cursor as writer
         let reader2 = Cursor::new(b"*1\r\n$4\r\nPING\r\n".to_vec());
         let mut cursor_writer = Cursor::new(Vec::new());
-        handle_connection_impl(reader2, &mut cursor_writer, &command_input).await?;
+        handle_connection_impl(reader2, &mut cursor_writer, &app_context).await?;
         assert_eq!(cursor_writer.into_inner(), b"+PONG\r\n");
 
         Ok(())
@@ -248,14 +248,14 @@ mod tests {
     async fn test_set_with_ex_option() -> Result<()> {
         let store = Store::new();
         let config = Config::default();
-        let command_input = CommandExecuteInput::new(&store, &config);
+        let app_context = AppContext::new(&store, &config);
 
         // SET key value EX 1 (expire in 1 second)
         let reader = Cursor::new(
             b"*5\r\n$3\r\nSET\r\n$6\r\ntestex\r\n$5\r\nvalue\r\n$2\r\nEX\r\n$1\r\n1\r\n".to_vec(),
         );
         let mut writer = Vec::new();
-        handle_connection_impl(reader, &mut writer, &command_input).await?;
+        handle_connection_impl(reader, &mut writer, &app_context).await?;
         assert_eq!(writer, b"+OK\r\n");
         assert_eq!(store.get_string("testex"), Some("value".to_string()));
 
@@ -270,14 +270,14 @@ mod tests {
     async fn test_set_with_px_option() -> Result<()> {
         let store = Store::new();
         let config = Config::default();
-        let command_input = CommandExecuteInput::new(&store, &config);
+        let app_context = AppContext::new(&store, &config);
 
         // SET key value PX 500 (expire in 500 milliseconds)
         let reader = Cursor::new(
             b"*5\r\n$3\r\nSET\r\n$6\r\ntestpx\r\n$5\r\nvalue\r\n$2\r\nPX\r\n$3\r\n500\r\n".to_vec(),
         );
         let mut writer = Vec::new();
-        handle_connection_impl(reader, &mut writer, &command_input).await?;
+        handle_connection_impl(reader, &mut writer, &app_context).await?;
         assert_eq!(writer, b"+OK\r\n");
         assert_eq!(store.get_string("testpx"), Some("value".to_string()));
 
@@ -292,7 +292,7 @@ mod tests {
     async fn test_set_get_with_expiration_workflow() -> Result<()> {
         let store = Store::new();
         let config = Config::default();
-        let command_input = CommandExecuteInput::new(&store, &config);
+        let app_context = AppContext::new(&store, &config);
 
         // SET with expiration
         let set_reader = Cursor::new(
@@ -300,13 +300,13 @@ mod tests {
                 .to_vec(),
         );
         let mut set_writer = Vec::new();
-        handle_connection_impl(set_reader, &mut set_writer, &command_input).await?;
+        handle_connection_impl(set_reader, &mut set_writer, &app_context).await?;
         assert_eq!(set_writer, b"+OK\r\n");
 
         // GET immediately - should exist
         let get_reader1 = Cursor::new(b"*2\r\n$3\r\nGET\r\n$7\r\nmykey99\r\n".to_vec());
         let mut get_writer1 = Vec::new();
-        handle_connection_impl(get_reader1, &mut get_writer1, &command_input).await?;
+        handle_connection_impl(get_reader1, &mut get_writer1, &app_context).await?;
         assert_eq!(get_writer1, b"$7\r\nmyval99\r\n");
 
         // Wait for expiration
@@ -315,7 +315,7 @@ mod tests {
         // GET after expiration - should return null
         let reader2 = Cursor::new(b"*2\r\n$3\r\nGET\r\n$7\r\nmykey99\r\n".to_vec());
         let mut writer2 = Vec::new();
-        handle_connection_impl(reader2, &mut writer2, &command_input).await?;
+        handle_connection_impl(reader2, &mut writer2, &app_context).await?;
         assert_eq!(writer2, b"$-1\r\n");
 
         Ok(())
@@ -325,21 +325,21 @@ mod tests {
     async fn test_set_overwrites_expiration() -> Result<()> {
         let store = Store::new();
         let config = Config::default();
-        let command_input = CommandExecuteInput::new(&store, &config);
+        let app_context = AppContext::new(&store, &config);
 
         // SET with short expiration
         let set1_reader = Cursor::new(
             b"*5\r\n$3\r\nSET\r\n$8\r\noverride\r\n$2\r\nv1\r\n$2\r\nPX\r\n$3\r\n100\r\n".to_vec(),
         );
         let mut set1_writer = Vec::new();
-        handle_connection_impl(set1_reader, &mut set1_writer, &command_input).await?;
+        handle_connection_impl(set1_reader, &mut set1_writer, &app_context).await?;
         assert_eq!(set1_writer, b"+OK\r\n");
 
         // Immediately SET without expiration
         let set2_reader =
             Cursor::new(b"*3\r\n$3\r\nSET\r\n$8\r\noverride\r\n$2\r\nv2\r\n".to_vec());
         let mut set2_writer = Vec::new();
-        handle_connection_impl(set2_reader, &mut set2_writer, &command_input).await?;
+        handle_connection_impl(set2_reader, &mut set2_writer, &app_context).await?;
         assert_eq!(set2_writer, b"+OK\r\n");
 
         // Wait past original expiration
@@ -348,7 +348,7 @@ mod tests {
         // GET should still return value (no expiration on second SET)
         let reader3 = Cursor::new(b"*2\r\n$3\r\nGET\r\n$8\r\noverride\r\n".to_vec());
         let mut writer3 = Vec::new();
-        handle_connection_impl(reader3, &mut writer3, &command_input).await?;
+        handle_connection_impl(reader3, &mut writer3, &app_context).await?;
         assert_eq!(writer3, b"$2\r\nv2\r\n");
 
         Ok(())
@@ -358,26 +358,26 @@ mod tests {
     async fn test_multiple_keys_with_different_expirations() -> Result<()> {
         let store = Store::new();
         let config = Config::default();
-        let command_input = CommandExecuteInput::new(&store, &config);
+        let app_context = AppContext::new(&store, &config);
 
         // SET key1 with long expiration
         let reader1 = Cursor::new(
             b"*5\r\n$3\r\nSET\r\n$4\r\nkey1\r\n$4\r\nval1\r\n$2\r\nPX\r\n$4\r\n1000\r\n".to_vec(),
         );
         let mut writer1 = Vec::new();
-        handle_connection_impl(reader1, &mut writer1, &command_input).await?;
+        handle_connection_impl(reader1, &mut writer1, &app_context).await?;
 
         // SET key2 with short expiration
         let reader2 = Cursor::new(
             b"*5\r\n$3\r\nSET\r\n$4\r\nkey2\r\n$4\r\nval2\r\n$2\r\nPX\r\n$3\r\n100\r\n".to_vec(),
         );
         let mut writer2 = Vec::new();
-        handle_connection_impl(reader2, &mut writer2, &command_input).await?;
+        handle_connection_impl(reader2, &mut writer2, &app_context).await?;
 
         // SET key3 without expiration
         let reader3 = Cursor::new(b"*3\r\n$3\r\nSET\r\n$4\r\nkey3\r\n$4\r\nval3\r\n".to_vec());
         let mut writer3 = Vec::new();
-        handle_connection_impl(reader3, &mut writer3, &command_input).await?;
+        handle_connection_impl(reader3, &mut writer3, &app_context).await?;
 
         // Wait for key2 to expire
         tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;

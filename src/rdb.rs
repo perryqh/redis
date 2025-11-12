@@ -5,9 +5,9 @@ use crate::store::{DataType, StoreValue};
 use anyhow::Result;
 
 pub fn parse_rdb_file(bytes: Vec<u8>) -> Result<Rdb> {
-    Ok(Rdb {
-        version: String::from_utf8(bytes[5..9].to_vec())?,
-    })
+    let version = String::from_utf8(bytes[5..9].to_vec())?;
+    // skip bytes to b"FE00"
+    Ok(Rdb { version })
 }
 
 #[allow(dead_code)]

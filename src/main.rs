@@ -3,9 +3,9 @@ use std::sync::Arc;
 use anyhow::Result;
 use clap::Parser;
 use codecrafters_redis::cli::Args;
-use codecrafters_redis::commands::CommandExecuteInput;
 use codecrafters_redis::config::Config;
 use codecrafters_redis::connection::handle_connection;
+use codecrafters_redis::context::AppContext;
 use codecrafters_redis::store::Store;
 use tokio::net::TcpListener;
 
@@ -31,8 +31,8 @@ async fn main() -> Result<()> {
 
         // Spawn a new task to handle this connection
         tokio::spawn(async move {
-            let command_input = CommandExecuteInput::new(&store_clone, &config_clone);
-            if let Err(e) = handle_connection(socket, &command_input).await {
+            let app_context = AppContext::new(&store_clone, &config_clone);
+            if let Err(e) = handle_connection(socket, &app_context).await {
                 eprintln!("Error handling connection from {}: {}", peer_addr, e);
             }
         });
