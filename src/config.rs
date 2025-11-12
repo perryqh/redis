@@ -1,7 +1,7 @@
 use crate::cli::Args;
 use anyhow::Result;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Config {
     pub dir: String,
     pub dbfilename: String,

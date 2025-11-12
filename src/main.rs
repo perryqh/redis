@@ -3,6 +3,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use clap::Parser;
 use codecrafters_redis::cli::Args;
+use codecrafters_redis::commands::CommandExecuteInput;
 use codecrafters_redis::config::Config;
 use codecrafters_redis::connection::handle_connection;
 use codecrafters_redis::store::Store;
@@ -26,10 +27,12 @@ async fn main() -> Result<()> {
 
         // Clone the Arc for the spawned task
         let store_clone = Arc::clone(&store);
+        let config_clone = config.clone();
 
         // Spawn a new task to handle this connection
         tokio::spawn(async move {
-            if let Err(e) = handle_connection(socket, &store_clone).await {
+            let command_input = CommandExecuteInput::new(&store_clone, &config_clone);
+            if let Err(e) = handle_connection(socket, &command_input).await {
                 eprintln!("Error handling connection from {}: {}", peer_addr, e);
             }
         });
