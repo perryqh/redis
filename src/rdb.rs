@@ -68,9 +68,9 @@ fn parse_key_value(
     let value = String::from_utf8(bytes[current_index..current_index + string_length].to_vec())
         .context("Failed to parse value")?;
     let value = if let Some(duration) = duration {
-        StoreValue::new_with_expiration(DataType::String(value), duration)
+        StoreValue::new_with_duration(DataType::String(value), duration)
     } else {
-        StoreValue::new(DataType::String(value))
+        StoreValue::new(DataType::String(value), None)
     };
     current_index += string_length;
     Ok(Some((key, value, current_index)))

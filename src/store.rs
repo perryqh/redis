@@ -27,18 +27,23 @@ pub struct StoreValue<V> {
 
 impl<V> StoreValue<V> {
     /// Creates a new value without expiration
-    pub fn new(data: V) -> Self {
+    pub fn new(data: V, expires_at: Option<Instant>) -> Self {
+        Self { data, expires_at }
+    }
+
+    /// Creates a new value with expiration
+    pub fn new_with_duration(data: V, ttl: Duration) -> Self {
         Self {
             data,
-            expires_at: None,
+            expires_at: Some(Instant::now() + ttl),
         }
     }
 
     /// Creates a new value with expiration
-    pub fn new_with_expiration(data: V, ttl: Duration) -> Self {
+    pub fn new_with_expiration(data: V, expires_at: Instant) -> Self {
         Self {
             data,
-            expires_at: Some(Instant::now() + ttl),
+            expires_at: Some(expires_at),
         }
     }
 
@@ -83,7 +88,7 @@ impl<V: Clone> Store<V> {
     /// ```
     pub fn set(&self, key: String, value: V) {
         let mut map = self.inner.write().unwrap();
-        map.insert(key, StoreValue::new(value));
+        map.insert(key, StoreValue::new(value, None));
     }
 
     /// Sets a key-value pair with expiration
@@ -107,7 +112,7 @@ impl<V: Clone> Store<V> {
     /// ```
     pub fn set_with_expiration(&self, key: String, value: V, ttl: Duration) {
         let mut map = self.inner.write().unwrap();
-        map.insert(key, StoreValue::new_with_expiration(value, ttl));
+        map.insert(key, StoreValue::new_with_duration(value, ttl));
     }
 
     /// Gets a value by key, returning None if the key doesn't exist or has expired
@@ -319,7 +324,7 @@ impl Store<DataType> {
         let mut map = self.inner.write().unwrap();
         let entry = map
             .entry(key)
-            .or_insert_with(|| StoreValue::new(self::DataType::List(Vec::new())));
+            .or_insert_with(|| StoreValue::new(self::DataType::List(Vec::new()), None));
 
         match &mut entry.data {
             self::DataType::List(list) => {
