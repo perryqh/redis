@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
-use std::time::{Duration, Instant};
+use std::time::{Duration, SystemTime};
 
 use anyhow::Result;
 use regex::Regex;
@@ -22,12 +22,12 @@ pub enum DataType {
 #[derive(Clone, Debug)]
 pub struct StoreValue<V> {
     pub data: V,
-    pub expires_at: Option<Instant>,
+    pub expires_at: Option<SystemTime>,
 }
 
 impl<V> StoreValue<V> {
     /// Creates a new value without expiration
-    pub fn new(data: V, expires_at: Option<Instant>) -> Self {
+    pub fn new(data: V, expires_at: Option<SystemTime>) -> Self {
         Self { data, expires_at }
     }
 
@@ -35,12 +35,12 @@ impl<V> StoreValue<V> {
     pub fn new_with_duration(data: V, ttl: Duration) -> Self {
         Self {
             data,
-            expires_at: Some(Instant::now() + ttl),
+            expires_at: Some(SystemTime::now() + ttl),
         }
     }
 
     /// Creates a new value with expiration
-    pub fn new_with_expiration(data: V, expires_at: Instant) -> Self {
+    pub fn new_with_expiration(data: V, expires_at: SystemTime) -> Self {
         Self {
             data,
             expires_at: Some(expires_at),
@@ -50,7 +50,7 @@ impl<V> StoreValue<V> {
     /// Checks if the value has expired
     fn is_expired(&self) -> bool {
         self.expires_at
-            .map(|expires_at| Instant::now() >= expires_at)
+            .map(|expires_at| SystemTime::now() >= expires_at)
             .unwrap_or(false)
     }
 }
@@ -835,7 +835,7 @@ mod tests {
         // Manually set expiration on the list entry
         let mut map = store.inner.write().unwrap();
         if let Some(entry) = map.get_mut("templist") {
-            entry.expires_at = Some(Instant::now() + Duration::from_millis(50));
+            entry.expires_at = Some(SystemTime::now() + Duration::from_millis(50));
         }
         drop(map);
 

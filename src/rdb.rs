@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::store::{DataType, StoreValue};
 use anyhow::{Context, Result};
@@ -32,10 +32,11 @@ fn parse_key_value(
     if flag == 0xFF {
         return Ok(None);
     }
-    let duration: Option<Duration> = match flag {
+    let expires_at: Option<SystemTime> = match flag {
         0xFC => {
             let length_bytes = &bytes[current_index..current_index + 8].try_into()?;
-            let millis_expiration = u64::from_le_bytes(*length_bytes);
+            let expiration_timestamp_in_milliseconds = u64::from_le_bytes(*length_bytes);
+            let duration = Duration::from_millis(expiration_timestamp_in_milliseconds);
 
             current_index += 8;
             if bytes[current_index] == 0x00 {
@@ -43,11 +44,12 @@ fn parse_key_value(
             } else {
                 return Ok(None);
             }
-            Some(Duration::from_millis(millis_expiration))
+            Some(system_time_from_duration_since_unix_epoch(duration))
         }
         0xFD => {
             let length_bytes = &bytes[current_index..current_index + 4].try_into()?;
-            let second_expiration = u32::from_le_bytes(*length_bytes);
+            let expiration_timestamp_in_seconds = u32::from_le_bytes(*length_bytes);
+            let duration = Duration::from_secs(expiration_timestamp_in_seconds as u64);
 
             current_index += 4;
             if bytes[current_index] == 0x00 {
@@ -55,7 +57,7 @@ fn parse_key_value(
             } else {
                 return Ok(None);
             }
-            Some(Duration::from_secs(second_expiration as u64))
+            Some(system_time_from_duration_since_unix_epoch(duration))
         }
         _ => None,
     };
@@ -67,13 +69,13 @@ fn parse_key_value(
     let (string_length, mut current_index) = length_encoded_int(bytes, current_index)?;
     let value = String::from_utf8(bytes[current_index..current_index + string_length].to_vec())
         .context("Failed to parse value")?;
-    let value = if let Some(duration) = duration {
-        StoreValue::new_with_duration(DataType::String(value), duration)
-    } else {
-        StoreValue::new(DataType::String(value), None)
-    };
+    let value = StoreValue::new(DataType::String(value), expires_at);
     current_index += string_length;
     Ok(Some((key, value, current_index)))
+}
+
+fn system_time_from_duration_since_unix_epoch(duration: Duration) -> SystemTime {
+    UNIX_EPOCH + duration
 }
 
 // Skipping over the FA and FE sections
@@ -211,7 +213,10 @@ mod tests {
         let (key, store_value, index) = parse_key_value(&bytes, 0)?.unwrap();
         assert_eq!(key, "foo");
         assert_eq!(&store_value.data, &DataType::String("bar".to_string()));
-        assert!(&store_value.expires_at.is_some());
+        assert_eq!(
+            &store_value.expires_at,
+            &Some(UNIX_EPOCH + Duration::from_secs(1713824559) + Duration::from_nanos(637000000))
+        );
         assert_eq!(index, 18);
 
         Ok(())
@@ -225,7 +230,10 @@ mod tests {
         let (key, store_value, index) = parse_key_value(&bytes, 0)?.unwrap();
         assert_eq!(key, "baz");
         assert_eq!(&store_value.data, &DataType::String("qux".to_string()));
-        assert!(&store_value.expires_at.is_some());
+        assert_eq!(
+            &store_value.expires_at,
+            &Some(UNIX_EPOCH + Duration::from_secs(1714089298))
+        );
         assert_eq!(index, 14);
 
         Ok(())
@@ -301,5 +309,16 @@ mod tests {
         assert_eq!(result, 2);
 
         Ok(())
+    }
+
+    #[test]
+    fn test_instant_from_duration_since_unix_epoch() {
+        let duration = Duration::from_secs(0);
+        let result = system_time_from_duration_since_unix_epoch(duration);
+        assert_eq!(result, UNIX_EPOCH);
+
+        let duration = Duration::from_secs(1763056572);
+        let result = system_time_from_duration_since_unix_epoch(duration);
+        assert_eq!(result, UNIX_EPOCH + duration);
     }
 }
