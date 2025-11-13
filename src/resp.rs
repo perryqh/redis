@@ -743,4 +743,15 @@ mod tests {
 
         Ok(())
     }
+
+    #[test]
+    fn test_keys() -> Result<()> {
+        let store = Store::new();
+
+        execute_command(vec!["set", "mykey", "stringvalue"], &store)?;
+        let response = execute_command(vec!["keys", "*"], &store)?;
+        assert_eq!(response, b"*1\r\n$5\r\nmykey\r\n");
+
+        Ok(())
+    }
 }

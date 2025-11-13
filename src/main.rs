@@ -15,16 +15,7 @@ use tokio::net::TcpListener;
 async fn main() -> Result<()> {
     let args = Args::parse();
     let config = Config::new(args)?;
-    let contents = fs::read(config.full_rdb_path())?;
-    let rdb = parse_rdb_file(contents);
-    // Create a shared store wrapped in Arc for thread-safe access across tasks
-    let store = match rdb {
-        Ok(rdb) => Arc::new(Store::from_rdb(rdb.to_store_values())?),
-        Err(e) => {
-            eprintln!("Failed to parse RDB file: {}", e);
-            Arc::new(Store::new())
-        }
-    };
+    let store = build_store(&config).await?;
 
     // Bind to the Redis default port
     let listener = TcpListener::bind("127.0.0.1:6379").await?;
@@ -46,5 +37,16 @@ async fn main() -> Result<()> {
                 eprintln!("Error handling connection from {}: {}", peer_addr, e);
             }
         });
+    }
+
+    async fn build_store(config: &Config) -> Result<Arc<Store>> {
+        let contents = fs::read(config.full_rdb_path());
+        if let Ok(contents) = contents {
+            let rdb = parse_rdb_file(contents);
+            if let Ok(rdb) = rdb {
+                return Ok(Arc::new(Store::from_rdb(rdb.to_store_values())?));
+            }
+        }
+        Ok(Arc::new(Store::new()))
     }
 }
