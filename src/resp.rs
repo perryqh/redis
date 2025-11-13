@@ -754,4 +754,368 @@ mod tests {
 
         Ok(())
     }
+
+    #[test]
+    fn test_parse_simple_string_success() -> Result<()> {
+        let input = b"+OK\r\n";
+        let mut cursor = Cursor::new(&input[..]);
+        let result = parse_data_type(&mut cursor)?;
+
+        assert!(result.is_some());
+        let simple_string = result.unwrap();
+        let simple_string = simple_string
+            .as_any()
+            .downcast_ref::<SimpleString>()
+            .unwrap();
+        assert_eq!(simple_string.value, "OK");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_simple_string_empty() -> Result<()> {
+        let input = b"+\r\n";
+        let mut cursor = Cursor::new(&input[..]);
+        let result = parse_data_type(&mut cursor)?;
+
+        assert!(result.is_some());
+        let simple_string = result.unwrap();
+        let simple_string = simple_string
+            .as_any()
+            .downcast_ref::<SimpleString>()
+            .unwrap();
+        assert_eq!(simple_string.value, "");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_simple_string_with_spaces() -> Result<()> {
+        let input = b"+Hello World\r\n";
+        let mut cursor = Cursor::new(&input[..]);
+        let result = parse_data_type(&mut cursor)?;
+
+        assert!(result.is_some());
+        let simple_string = result.unwrap();
+        let simple_string = simple_string
+            .as_any()
+            .downcast_ref::<SimpleString>()
+            .unwrap();
+        assert_eq!(simple_string.value, "Hello World");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_bulk_string_success() -> Result<()> {
+        let input = b"$5\r\nhello\r\n";
+        let mut cursor = Cursor::new(&input[..]);
+        let result = parse_data_type(&mut cursor)?;
+
+        assert!(result.is_some());
+        let bulk_string = result.unwrap();
+        let bulk_string = bulk_string.as_any().downcast_ref::<BulkString>().unwrap();
+        assert_eq!(bulk_string.value, "hello");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_bulk_string_empty() -> Result<()> {
+        let input = b"$0\r\n\r\n";
+        let mut cursor = Cursor::new(&input[..]);
+        let result = parse_data_type(&mut cursor)?;
+
+        assert!(result.is_some());
+        let bulk_string = result.unwrap();
+        let bulk_string = bulk_string.as_any().downcast_ref::<BulkString>().unwrap();
+        assert_eq!(bulk_string.value, "");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_bulk_string_with_special_chars() -> Result<()> {
+        let input = b"$13\r\nHello\r\nWorld!\r\n";
+        let mut cursor = Cursor::new(&input[..]);
+        let result = parse_data_type(&mut cursor)?;
+
+        assert!(result.is_some());
+        let bulk_string = result.unwrap();
+        let bulk_string = bulk_string.as_any().downcast_ref::<BulkString>().unwrap();
+        assert_eq!(bulk_string.value, "Hello\r\nWorld!");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_empty_array() -> Result<()> {
+        let input = b"*0\r\n";
+        let mut cursor = Cursor::new(&input[..]);
+        let result = parse_data_type(&mut cursor)?;
+
+        assert!(result.is_some());
+        let array = result.unwrap();
+        let array = array.as_any().downcast_ref::<Array>().unwrap();
+        assert_eq!(array.values.len(), 0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_array_with_integers() -> Result<()> {
+        let input = b"*3\r\n:1\r\n:2\r\n:3\r\n";
+        let mut cursor = Cursor::new(&input[..]);
+        let result = parse_data_type(&mut cursor)?;
+
+        assert!(result.is_some());
+        let array = result.unwrap();
+        let array = array.as_any().downcast_ref::<Array>().unwrap();
+        assert_eq!(array.values.len(), 3);
+
+        let int1 = array.values[0].as_any().downcast_ref::<Integer>().unwrap();
+        assert_eq!(int1.value, 1);
+
+        let int2 = array.values[1].as_any().downcast_ref::<Integer>().unwrap();
+        assert_eq!(int2.value, 2);
+
+        let int3 = array.values[2].as_any().downcast_ref::<Integer>().unwrap();
+        assert_eq!(int3.value, 3);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_array_with_simple_strings() -> Result<()> {
+        let input = b"*2\r\n+Hello\r\n+World\r\n";
+        let mut cursor = Cursor::new(&input[..]);
+        let result = parse_data_type(&mut cursor)?;
+
+        assert!(result.is_some());
+        let array = result.unwrap();
+        let array = array.as_any().downcast_ref::<Array>().unwrap();
+        assert_eq!(array.values.len(), 2);
+
+        let str1 = array.values[0]
+            .as_any()
+            .downcast_ref::<SimpleString>()
+            .unwrap();
+        assert_eq!(str1.value, "Hello");
+
+        let str2 = array.values[1]
+            .as_any()
+            .downcast_ref::<SimpleString>()
+            .unwrap();
+        assert_eq!(str2.value, "World");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_data_type_invalid_type() -> Result<()> {
+        let input = b"@invalid\r\n";
+        let mut cursor = Cursor::new(&input[..]);
+        let result = parse_data_type(&mut cursor)?;
+
+        assert!(result.is_none());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_integer_negative() -> Result<()> {
+        let input = b":-42\r\n";
+        let mut cursor = Cursor::new(&input[..]);
+        let result = parse_data_type(&mut cursor)?;
+
+        assert!(result.is_some());
+        let integer = result.unwrap();
+        let integer = integer.as_any().downcast_ref::<Integer>().unwrap();
+        assert_eq!(integer.value, -42);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_integer_zero() -> Result<()> {
+        let input = b":0\r\n";
+        let mut cursor = Cursor::new(&input[..]);
+        let result = parse_data_type(&mut cursor)?;
+
+        assert!(result.is_some());
+        let integer = result.unwrap();
+        let integer = integer.as_any().downcast_ref::<Integer>().unwrap();
+        assert_eq!(integer.value, 0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_error_message() -> Result<()> {
+        let input = b"-ERR unknown command\r\n";
+        let mut cursor = Cursor::new(&input[..]);
+        let result = parse_data_type(&mut cursor)?;
+
+        assert!(result.is_some());
+        let error = result.unwrap();
+        let error = error.as_any().downcast_ref::<SimpleError>().unwrap();
+        assert_eq!(error.value, "ERR unknown command");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_error_empty() -> Result<()> {
+        let input = b"-\r\n";
+        let mut cursor = Cursor::new(&input[..]);
+        let result = parse_data_type(&mut cursor)?;
+
+        assert!(result.is_some());
+        let error = result.unwrap();
+        let error = error.as_any().downcast_ref::<SimpleError>().unwrap();
+        assert_eq!(error.value, "");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_command_unknown() -> Result<()> {
+        let input = b"*1\r\n$7\r\nUNKNOWN\r\n";
+        let mut cursor = Cursor::new(&input[..]);
+        let result = parse_command(&mut cursor)?;
+
+        assert!(result.is_none());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_command_set_insufficient_args() -> Result<()> {
+        let input = b"*2\r\n$3\r\nSET\r\n$3\r\nkey\r\n";
+        let mut cursor = Cursor::new(&input[..]);
+        let result = parse_command(&mut cursor)?;
+
+        assert!(result.is_none());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_command_get_insufficient_args() -> Result<()> {
+        let input = b"*1\r\n$3\r\nGET\r\n";
+        let mut cursor = Cursor::new(&input[..]);
+        let result = parse_command(&mut cursor)?;
+
+        assert!(result.is_none());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_command_case_insensitive() -> Result<()> {
+        // Test lowercase ping
+        let input = b"*1\r\n$4\r\nping\r\n";
+        let mut cursor = Cursor::new(&input[..]);
+        let result = parse_command(&mut cursor)?;
+        assert!(result.is_some());
+
+        // Test mixed case PING
+        let input = b"*1\r\n$4\r\nPiNg\r\n";
+        let mut cursor = Cursor::new(&input[..]);
+        let result = parse_command(&mut cursor)?;
+        assert!(result.is_some());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_command_rpush_insufficient_args() -> Result<()> {
+        let input = b"*2\r\n$5\r\nRPUSH\r\n$3\r\nkey\r\n";
+        let mut cursor = Cursor::new(&input[..]);
+        let result = parse_command(&mut cursor)?;
+
+        assert!(result.is_none());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_command_rpop_insufficient_args() -> Result<()> {
+        let input = b"*1\r\n$4\r\nRPOP\r\n";
+        let mut cursor = Cursor::new(&input[..]);
+        let result = parse_command(&mut cursor)?;
+
+        assert!(result.is_none());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_command_config_insufficient_args() -> Result<()> {
+        let input = b"*1\r\n$6\r\nCONFIG\r\n";
+        let mut cursor = Cursor::new(&input[..]);
+        let result = parse_command(&mut cursor)?;
+
+        assert!(result.is_none());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_command_keys_insufficient_args() -> Result<()> {
+        let input = b"*1\r\n$4\r\nKEYS\r\n";
+        let mut cursor = Cursor::new(&input[..]);
+        let result = parse_command(&mut cursor)?;
+
+        assert!(result.is_none());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_bulk_string_large() -> Result<()> {
+        let large_string = "a".repeat(1000);
+        let input = format!("${}\r\n{}\r\n", large_string.len(), large_string);
+        let mut cursor = Cursor::new(input.as_bytes());
+        let result = parse_data_type(&mut cursor)?;
+
+        assert!(result.is_some());
+        let bulk_string = result.unwrap();
+        let bulk_string = bulk_string.as_any().downcast_ref::<BulkString>().unwrap();
+        assert_eq!(bulk_string.value.len(), 1000);
+        assert_eq!(bulk_string.value, large_string);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_array_single_element() -> Result<()> {
+        let input = b"*1\r\n$4\r\ntest\r\n";
+        let mut cursor = Cursor::new(&input[..]);
+        let result = parse_data_type(&mut cursor)?;
+
+        assert!(result.is_some());
+        let array = result.unwrap();
+        let array = array.as_any().downcast_ref::<Array>().unwrap();
+        assert_eq!(array.values.len(), 1);
+
+        let bulk_string = array.values[0]
+            .as_any()
+            .downcast_ref::<BulkString>()
+            .unwrap();
+        assert_eq!(bulk_string.value, "test");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_data_type_partial_data() -> Result<()> {
+        let input = b"+OK"; // Missing \r\n
+        let mut cursor = Cursor::new(&input[..]);
+        let result = parse_data_type(&mut cursor)?;
+
+        assert!(result.is_none());
+
+        Ok(())
+    }
 }
