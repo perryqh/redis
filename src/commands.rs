@@ -237,6 +237,31 @@ impl RedisCommand for ConfigCommand {
     }
 }
 
+#[derive(Debug)]
+pub struct KeysCommand {
+    pub pattern: String,
+}
+
+impl KeysCommand {
+    pub fn new(input_array: &[Box<dyn RedisDataType>]) -> Result<Self> {
+        let pattern = extract_bulk_string(input_array, 0, "pattern")?
+            .trim_matches('"')
+            .to_string();
+        Ok(KeysCommand { pattern })
+    }
+}
+
+impl RedisCommand for KeysCommand {
+    fn execute<'a>(&self, app_context: &'a AppContext<'a>) -> Result<Vec<u8>> {
+        let keys: Vec<String> = app_context.store.keys(&self.pattern)?;
+        let bulk_strings = keys
+            .into_iter()
+            .map(|key| Box::new(BulkString::new(key)) as Box<dyn RedisDataType>)
+            .collect();
+        Array::new(bulk_strings).to_bytes()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::config::Config;
@@ -413,6 +438,21 @@ mod tests {
         command.execute(&app_context).unwrap();
         thread::sleep(Duration::from_millis(100));
         assert_eq!(store.get_string("persistent"), Some("forever".to_string()));
+    }
+
+    #[test]
+    fn test_keys_command() -> Result<()> {
+        let store = Store::new();
+        let config = Config::default();
+        let app_context = AppContext::new(&store, &config);
+        let command = SetCommand::new(&set_command_args("foo", "bar"))?;
+        command.execute(&app_context)?;
+
+        let command = KeysCommand::new(&[bulk_string("\"foo\"")]).unwrap();
+        let result = command.execute(&app_context)?;
+        assert_eq!(result, b"*1\r\n$3\r\nfoo\r\n");
+
+        Ok(())
     }
 
     #[test]

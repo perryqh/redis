@@ -13,7 +13,6 @@ pub fn parse_rdb_file(bytes: Vec<u8>) -> Result<Rdb> {
     let version = String::from_utf8(bytes[5..9].to_vec()).context("Failed to parse version")?;
     let mut current_index = find_data_begin_index(&bytes)?;
 
-    dbg!(current_index);
     let mut data: HashMap<String, StoreValue<DataType>> = HashMap::new();
     while let Some((key, value, index)) = parse_key_value(&bytes, current_index)? {
         current_index = index;

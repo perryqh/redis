@@ -3,6 +3,7 @@ use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
+use regex::Regex;
 
 /// The type of data that can be stored in Redis
 #[derive(Clone, Debug, PartialEq)]
@@ -278,6 +279,16 @@ impl Store<DataType> {
         })
     }
 
+    pub fn keys(&self, pattern: &str) -> Result<Vec<String>> {
+        // replace * with .* in pattern
+        let pattern = pattern.replace("*", ".*");
+        let map = self.inner.read().unwrap();
+        let re = Regex::new(&pattern).unwrap();
+        let mut keys: Vec<String> = map.keys().filter(|key| re.is_match(key)).cloned().collect();
+        keys.sort();
+        Ok(keys)
+    }
+
     /// Sets a string value without expiration
     pub fn set_string(&self, key: String, value: String) {
         self.set(key, self::DataType::String(value));
@@ -427,6 +438,32 @@ mod tests {
             store.rpush(key.to_string(), value.to_string());
         }
         store
+    }
+
+    #[test]
+    fn test_keys() {
+        let store = store_with_string("key1", "value1");
+        store.set_string("key2".to_string(), "value2".to_string());
+        store.set_string("different".to_string(), "value3".to_string());
+
+        let keys = store.keys("key*").unwrap();
+        assert_eq!(keys, vec!["key1".to_string(), "key2".to_string()]);
+
+        let keys = store.keys("*").unwrap();
+        assert_eq!(
+            keys,
+            vec![
+                "different".to_string(),
+                "key1".to_string(),
+                "key2".to_string(),
+            ]
+        );
+
+        let keys = store.keys("nope").unwrap();
+        assert!(keys.is_empty());
+
+        let keys = store.keys("key2").unwrap();
+        assert_eq!(keys, vec!["key2".to_string()]);
     }
 
     #[test]
