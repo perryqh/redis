@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
+use std::time::Duration;
 
 use crate::store::{DataType, StoreValue};
 use anyhow::{Context, Result};
@@ -27,22 +28,53 @@ fn parse_key_value(
     current_index: ByteIndex,
 ) -> Result<Option<(String, StoreValue<DataType>, ByteIndex)>> {
     let mut current_index = current_index;
-    // if the first byte is 0x00, string
-    if bytes[current_index] == 0x00 {
-        current_index += 1;
-        let (string_length, mut current_index) = length_encoded_int(bytes, current_index)?;
-        let key = String::from_utf8(bytes[current_index..current_index + string_length].to_vec())
-            .context("Failed to parse key")?;
-        current_index += string_length;
-        let (string_length, mut current_index) = length_encoded_int(bytes, current_index)?;
-        let value = String::from_utf8(bytes[current_index..current_index + string_length].to_vec())
-            .context("Failed to parse value")?;
-        let value = StoreValue::new(DataType::String(value));
-        current_index += string_length;
-        Ok(Some((key, value, current_index)))
-    } else {
-        Ok(None)
+    let flag = bytes[current_index];
+    current_index += 1;
+    if flag == 0xFF {
+        return Ok(None);
     }
+    let duration: Option<Duration> = match flag {
+        0xFC => {
+            let length_bytes = &bytes[current_index..current_index + 8].try_into()?;
+            let millis_expiration = u64::from_le_bytes(*length_bytes);
+
+            current_index += 8;
+            if bytes[current_index] == 0x00 {
+                current_index += 1;
+            } else {
+                return Ok(None);
+            }
+            Some(Duration::from_millis(millis_expiration))
+        }
+        0xFD => {
+            let length_bytes = &bytes[current_index..current_index + 4].try_into()?;
+            let second_expiration = u32::from_le_bytes(*length_bytes);
+
+            current_index += 4;
+            if bytes[current_index] == 0x00 {
+                current_index += 1;
+            } else {
+                return Ok(None);
+            }
+            Some(Duration::from_secs(second_expiration as u64))
+        }
+        _ => None,
+    };
+
+    let (string_length, mut current_index) = length_encoded_int(bytes, current_index)?;
+    let key = String::from_utf8(bytes[current_index..current_index + string_length].to_vec())
+        .context("Failed to parse key")?;
+    current_index += string_length;
+    let (string_length, mut current_index) = length_encoded_int(bytes, current_index)?;
+    let value = String::from_utf8(bytes[current_index..current_index + string_length].to_vec())
+        .context("Failed to parse value")?;
+    let value = if let Some(duration) = duration {
+        StoreValue::new_with_expiration(DataType::String(value), duration)
+    } else {
+        StoreValue::new(DataType::String(value))
+    };
+    current_index += string_length;
+    Ok(Some((key, value, current_index)))
 }
 
 // Skipping over the FA and FE sections
@@ -167,6 +199,35 @@ mod tests {
         assert_eq!(&store_value.data, &DataType::String("qux".to_string()));
         assert_eq!(&store_value.expires_at, &None);
         assert_eq!(index, 9);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_key_value_milliseconds_expiration() -> Result<()> {
+        let bytes = Bytes::from(vec![
+            0xFC, 0x15, 0x72, 0xE7, 0x07, 0x8F, 0x01, 0x00, 0x00, 0x00, 0x03, 0x66, 0x6F, 0x6F,
+            0x03, 0x62, 0x61, 0x72,
+        ]);
+        let (key, store_value, index) = parse_key_value(&bytes, 0)?.unwrap();
+        assert_eq!(key, "foo");
+        assert_eq!(&store_value.data, &DataType::String("bar".to_string()));
+        assert!(&store_value.expires_at.is_some());
+        assert_eq!(index, 18);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_key_value_seconds_expiration() -> Result<()> {
+        let bytes = Bytes::from(vec![
+            0xFD, 0x52, 0xED, 0x2A, 0x66, 0x00, 0x03, 0x62, 0x61, 0x7A, 0x03, 0x71, 0x75, 0x78,
+        ]);
+        let (key, store_value, index) = parse_key_value(&bytes, 0)?.unwrap();
+        assert_eq!(key, "baz");
+        assert_eq!(&store_value.data, &DataType::String("qux".to_string()));
+        assert!(&store_value.expires_at.is_some());
+        assert_eq!(index, 14);
 
         Ok(())
     }

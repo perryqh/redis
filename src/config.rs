@@ -14,6 +14,10 @@ impl Config {
             dbfilename: args.dbfilename,
         })
     }
+
+    pub fn full_rdb_path(&self) -> String {
+        format!("{}/{}", self.dir, self.dbfilename)
+    }
 }
 
 impl Default for Config {

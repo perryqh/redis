@@ -1,9 +1,7 @@
 use std::collections::HashMap;
-use std::fs;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
-use crate::rdb::parse_rdb_file;
 use anyhow::Result;
 
 /// The type of data that can be stored in Redis
@@ -36,7 +34,7 @@ impl<V> StoreValue<V> {
     }
 
     /// Creates a new value with expiration
-    fn new_with_expiration(data: V, ttl: Duration) -> Self {
+    pub fn new_with_expiration(data: V, ttl: Duration) -> Self {
         Self {
             data,
             expires_at: Some(Instant::now() + ttl),
@@ -272,14 +270,11 @@ impl<V: Clone> Default for Store<V> {
 }
 
 impl Store<DataType> {
-    /// Creates a store from a config (loads RDB file if specified)
-    pub fn from_config(config: &crate::config::Config) -> Result<Self> {
-        let file_path = format!("{}/{}", config.dir, config.dbfilename);
-        let contents = fs::read(file_path)?;
-        let rdb = parse_rdb_file(contents)?;
-
+    pub fn from_rdb(
+        store_values: Arc<RwLock<HashMap<String, StoreValue<DataType>>>>,
+    ) -> Result<Self> {
         Ok(Self {
-            inner: rdb.to_store_values(),
+            inner: store_values,
         })
     }
 

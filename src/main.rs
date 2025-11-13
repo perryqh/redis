@@ -1,3 +1,4 @@
+use std::fs;
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -6,6 +7,7 @@ use codecrafters_redis::cli::Args;
 use codecrafters_redis::config::Config;
 use codecrafters_redis::connection::handle_connection;
 use codecrafters_redis::context::AppContext;
+use codecrafters_redis::rdb::parse_rdb_file;
 use codecrafters_redis::store::Store;
 use tokio::net::TcpListener;
 
@@ -13,8 +15,16 @@ use tokio::net::TcpListener;
 async fn main() -> Result<()> {
     let args = Args::parse();
     let config = Config::new(args)?;
+    let contents = fs::read(config.full_rdb_path())?;
+    let rdb = parse_rdb_file(contents);
     // Create a shared store wrapped in Arc for thread-safe access across tasks
-    let store = Arc::new(Store::from_config(&config).unwrap_or(Store::new()));
+    let store = match rdb {
+        Ok(rdb) => Arc::new(Store::from_rdb(rdb.to_store_values())?),
+        Err(e) => {
+            eprintln!("Failed to parse RDB file: {}", e);
+            Arc::new(Store::new())
+        }
+    };
 
     // Bind to the Redis default port
     let listener = TcpListener::bind("127.0.0.1:6379").await?;
