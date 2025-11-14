@@ -3,6 +3,7 @@ use std::time::Duration;
 use crate::{
     context::AppContext,
     datatypes::{Array, BulkString, Integer, NullBulkString, RedisDataType, SimpleString},
+    replication::Role,
 };
 use anyhow::{bail, Context, Result};
 
@@ -27,7 +28,7 @@ pub trait RedisCommand: Send {
 
 pub struct PingCommand {}
 impl RedisCommand for PingCommand {
-    fn execute<'a>(&self, _app_context: &AppContext) -> Result<Vec<u8>> {
+    fn execute(&self, _app_context: &AppContext) -> Result<Vec<u8>> {
         SimpleString::new("PONG".to_string()).to_bytes()
     }
 }
@@ -44,7 +45,7 @@ impl EchoCommand {
 }
 
 impl RedisCommand for EchoCommand {
-    fn execute<'a>(&self, _app_context: &AppContext) -> Result<Vec<u8>> {
+    fn execute(&self, _app_context: &AppContext) -> Result<Vec<u8>> {
         BulkString::new(self.message.clone()).to_bytes()
     }
 }
@@ -70,7 +71,7 @@ impl RpushCommand {
 }
 
 impl RedisCommand for RpushCommand {
-    fn execute<'a>(&self, app_context: &AppContext) -> Result<Vec<u8>> {
+    fn execute(&self, app_context: &AppContext) -> Result<Vec<u8>> {
         let mut len = 0;
         for value in &self.values {
             len = app_context.store.rpush(self.key.clone(), value.clone());
@@ -91,7 +92,7 @@ impl RpopCommand {
 }
 
 impl RedisCommand for RpopCommand {
-    fn execute<'a>(&self, app_context: &AppContext) -> Result<Vec<u8>> {
+    fn execute(&self, app_context: &AppContext) -> Result<Vec<u8>> {
         match app_context.store.rpop(&self.key) {
             Some(value) => BulkString::new(value).to_bytes(),
             None => NullBulkString {}.to_bytes(),
@@ -155,7 +156,7 @@ impl SetCommand {
 }
 
 impl RedisCommand for SetCommand {
-    fn execute<'a>(&self, app_context: &AppContext) -> Result<Vec<u8>> {
+    fn execute(&self, app_context: &AppContext) -> Result<Vec<u8>> {
         if let Some(ttl) = self.ttl {
             app_context
                 .store
@@ -182,7 +183,7 @@ impl GetCommand {
 }
 
 impl RedisCommand for GetCommand {
-    fn execute<'a>(&self, app_context: &AppContext) -> Result<Vec<u8>> {
+    fn execute(&self, app_context: &AppContext) -> Result<Vec<u8>> {
         match app_context.store.get_string(&self.key) {
             Some(value) => BulkString::new(value).to_bytes(),
             None => NullBulkString {}.to_bytes(),
@@ -215,7 +216,7 @@ impl ConfigCommand {
 }
 
 impl RedisCommand for ConfigCommand {
-    fn execute<'a>(&self, app_context: &AppContext) -> Result<Vec<u8>> {
+    fn execute(&self, app_context: &AppContext) -> Result<Vec<u8>> {
         match self.action {
             ConfigAction::Get(ref keys) => {
                 let mut values: Vec<Box<dyn RedisDataType>> = Vec::new();
@@ -252,7 +253,7 @@ impl KeysCommand {
 }
 
 impl RedisCommand for KeysCommand {
-    fn execute<'a>(&self, app_context: &AppContext) -> Result<Vec<u8>> {
+    fn execute(&self, app_context: &AppContext) -> Result<Vec<u8>> {
         let keys: Vec<String> = app_context.store.keys(&self.pattern)?;
         let bulk_strings = keys
             .into_iter()
@@ -262,9 +263,57 @@ impl RedisCommand for KeysCommand {
     }
 }
 
+#[derive(Debug)]
+pub enum InfoSection {
+    Replication,
+}
+
+#[derive(Debug)]
+pub struct InfoCommand {
+    pub sections: Vec<InfoSection>,
+}
+
+impl InfoCommand {
+    pub fn new(_input_array: &[Box<dyn RedisDataType>]) -> Result<Self> {
+        Ok(InfoCommand {
+            sections: vec![InfoSection::Replication],
+        })
+    }
+}
+
+impl RedisCommand for InfoCommand {
+    fn execute(&self, app_context: &AppContext) -> Result<Vec<u8>> {
+        let mut info = String::new();
+
+        for section in &self.sections {
+            match section {
+                InfoSection::Replication => match app_context.replication_role.as_ref() {
+                    Role::Master(master_replication) => {
+                        info.push_str("role:master\n");
+                        info.push_str("master_replid:");
+                        info.push_str(master_replication.replication_id.as_str());
+                        info.push('\n');
+                        info.push_str("master_repl_offset:");
+                        info.push_str(master_replication.replication_offset.to_string().as_str());
+                        info.push('\n');
+                    }
+                    Role::Slave(_slave_replication) => {
+                        info.push_str("role:slave\n");
+                    }
+                },
+            }
+        }
+        let bulk_string = BulkString::new(info);
+
+        bulk_string.to_bytes()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::datatypes::{BulkString, Integer, SimpleString};
+    use crate::replication::{MasterReplication, SlaveReplication};
+    use std::sync::Arc;
     use std::thread;
     use std::time::Duration;
 
@@ -722,5 +771,62 @@ mod tests {
         let command = RpopCommand::new(&[bulk_string("stringkey")]).unwrap();
         let response = command.execute(&app_context).unwrap();
         assert_eq!(response, b"$-1\r\n"); // Wrong type
+    }
+
+    #[test]
+    fn test_info_command() -> Result<()> {
+        let master_replication = MasterReplication::default();
+        let app_context = AppContext {
+            replication_role: Arc::new(Role::Master(master_replication.clone())),
+            ..Default::default()
+        };
+        let command = InfoCommand::new(&[])?;
+        let response = command.execute(&app_context)?;
+        let expected_string = format!(
+            "role:master\nmaster_replid:{}\nmaster_repl_offset:0\n",
+            master_replication.replication_id
+        );
+        let expected = format!("${}\r\n{}\r\n", expected_string.len(), expected_string);
+        let expected = expected.as_bytes();
+        assert_eq!(response, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn test_info_command_with_replication_master() -> Result<()> {
+        let master_replication = MasterReplication::default();
+        let app_context = AppContext {
+            replication_role: Arc::new(Role::Master(master_replication.clone())),
+            ..Default::default()
+        };
+        let command = InfoCommand::new(&[])?;
+        let response = command.execute(&app_context)?;
+        let expected_string = format!(
+            "role:master\nmaster_replid:{}\nmaster_repl_offset:0\n",
+            master_replication.replication_id
+        );
+        let expected = format!("${}\r\n{}\r\n", expected_string.len(), expected_string);
+        let expected = expected.as_bytes();
+        assert_eq!(response, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn test_info_command_with_replication_slave() -> Result<()> {
+        let master_replication = MasterReplication::default();
+        let slave_replication = SlaveReplication {
+            master_replication_id: master_replication.replication_id,
+        };
+        let app_context = AppContext {
+            replication_role: Arc::new(Role::Slave(slave_replication.clone())),
+            ..Default::default()
+        };
+        let command = InfoCommand::new(&[])?;
+        let response = command.execute(&app_context)?;
+        let expected_string = "role:slave\n".to_string();
+        let expected = format!("${}\r\n{}\r\n", expected_string.len(), expected_string);
+        let expected = expected.as_bytes();
+        assert_eq!(response, expected);
+        Ok(())
     }
 }
