@@ -6,5 +6,6 @@ pub mod context;
 pub mod datatypes;
 pub mod matcher;
 pub mod rdb;
+pub mod replication;
 pub mod resp;
 pub mod store;

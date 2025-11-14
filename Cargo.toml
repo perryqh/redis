@@ -10,6 +10,7 @@ bytes = "1.10.1"                                     # helps manage buffers
 clap = { version = "4.5.51", features = ["derive"] }
 tokio = { version = "1.48.0", features = ["full"] } # async networking
 tokio-stream = "0.1.17"                             # async stream utilities
+uuid = {version ="1.18.1", features = ["v4"]}                                      # unique identifiers
 
 [dev-dependencies]
 rusty-hook = "^0.11.2"
