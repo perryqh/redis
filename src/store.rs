@@ -60,7 +60,7 @@ impl<V> StoreValue<V> {
 ///
 /// This store uses RwLock to allow multiple concurrent reads while ensuring
 /// exclusive access for writes. Values can optionally expire after a specified duration.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Store<V = DataType> {
     inner: Arc<RwLock<HashMap<String, StoreValue<V>>>>,
 }

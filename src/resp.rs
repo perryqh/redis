@@ -262,10 +262,8 @@ fn parse_error(cursor: &mut Cursor<&[u8]>) -> Result<Option<Box<dyn RedisDataTyp
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::Config;
     use crate::context::AppContext;
-    use crate::replication::Role;
-    use crate::store::{DataType, Store};
+    use crate::store::DataType;
 
     fn redis_array_of_bulk_strings(strs: Vec<&str>) -> Vec<u8> {
         let mut result = Vec::new();
@@ -285,20 +283,17 @@ mod tests {
     }
 
     // Helper function to execute a command from string arguments
-    fn execute_command(args: Vec<&str>, store: &Store) -> Result<Vec<u8>> {
+    fn execute_command(args: Vec<&str>, app_context: &AppContext) -> Result<Vec<u8>> {
         let data = redis_array_of_bulk_strings(args);
         let mut cursor = Cursor::new(data.as_ref());
         let command = parse_command(&mut cursor)?
             .ok_or_else(|| anyhow::anyhow!("Failed to parse command"))?;
-        let config = Config::default();
-        let replication_role = Role::default();
-        let app_context = AppContext::new(store, &config, &replication_role);
-        command.execute(&app_context)
+        command.execute(app_context)
     }
 
     // Helper function to assert a list value in the store
-    fn assert_list_value(store: &Store, key: &str, expected: Vec<&str>) {
-        match store.get(key) {
+    fn assert_list_value(app_context: &AppContext, key: &str, expected: Vec<&str>) {
+        match app_context.store.get(key) {
             Some(DataType::List(list)) => {
                 assert_eq!(list, expected, "List values don't match");
             }
@@ -312,8 +307,8 @@ mod tests {
     }
 
     // Helper function to assert a string value in the store
-    fn assert_string_value(store: &Store, key: &str, expected: &str) {
-        match store.get(key) {
+    fn assert_string_value(app_context: &AppContext, key: &str, expected: &str) {
+        match app_context.store.get(key) {
             Some(DataType::String(s)) => {
                 assert_eq!(s, expected, "String values don't match");
             }
@@ -328,59 +323,59 @@ mod tests {
 
     #[test]
     fn test_rpush_single_value() -> Result<()> {
-        let store = Store::new();
-        let response = execute_command(vec!["rpush", "mykey", "value"], &store)?;
+        let app_context = AppContext::default();
+        let response = execute_command(vec!["rpush", "mykey", "value"], &app_context)?;
         assert_eq!(response, b":1\r\n");
-        assert_list_value(&store, "mykey", vec!["value"]);
+        assert_list_value(&app_context, "mykey", vec!["value"]);
         Ok(())
     }
 
     #[test]
     fn test_rpush_multiple_values() -> Result<()> {
-        let store = Store::new();
-        execute_command(vec!["rpush", "mykey", "value"], &store)?;
-        let response = execute_command(vec!["rpush", "mykey", "one", "two"], &store)?;
+        let app_context = AppContext::default();
+        execute_command(vec!["rpush", "mykey", "value"], &app_context)?;
+        let response = execute_command(vec!["rpush", "mykey", "one", "two"], &app_context)?;
         assert_eq!(response, b":3\r\n");
-        assert_list_value(&store, "mykey", vec!["value", "one", "two"]);
+        assert_list_value(&app_context, "mykey", vec!["value", "one", "two"]);
         Ok(())
     }
 
     #[test]
     fn test_rpush_multiple_values_at_once() -> Result<()> {
-        let store = Store::new();
-        let response = execute_command(vec!["rpush", "mylist", "a", "b", "c"], &store)?;
+        let app_context = AppContext::default();
+        let response = execute_command(vec!["rpush", "mylist", "a", "b", "c"], &app_context)?;
         assert_eq!(response, b":3\r\n");
-        assert_list_value(&store, "mylist", vec!["a", "b", "c"]);
+        assert_list_value(&app_context, "mylist", vec!["a", "b", "c"]);
         Ok(())
     }
 
     #[test]
     fn test_rpop_from_list() -> Result<()> {
-        let store = Store::new();
-        execute_command(vec!["rpush", "mykey", "one", "two", "three"], &store)?;
+        let app_context = AppContext::default();
+        execute_command(vec!["rpush", "mykey", "one", "two", "three"], &app_context)?;
 
-        let response = execute_command(vec!["rpop", "mykey"], &store)?;
+        let response = execute_command(vec!["rpop", "mykey"], &app_context)?;
         assert_eq!(response, b"$5\r\nthree\r\n");
-        assert_list_value(&store, "mykey", vec!["one", "two"]);
+        assert_list_value(&app_context, "mykey", vec!["one", "two"]);
         Ok(())
     }
 
     #[test]
     fn test_rpop_from_empty_list() -> Result<()> {
-        let store = Store::new();
-        execute_command(vec!["rpush", "mykey", "only"], &store)?;
-        execute_command(vec!["rpop", "mykey"], &store)?;
+        let app_context = AppContext::default();
+        execute_command(vec!["rpush", "mykey", "only"], &app_context)?;
+        execute_command(vec!["rpop", "mykey"], &app_context)?;
 
         // Pop from now-empty list
-        let response = execute_command(vec!["rpop", "mykey"], &store)?;
+        let response = execute_command(vec!["rpop", "mykey"], &app_context)?;
         assert_eq!(response, b"$-1\r\n"); // Null bulk string
         Ok(())
     }
 
     #[test]
     fn test_rpop_nonexistent_key() -> Result<()> {
-        let store = Store::new();
-        let response = execute_command(vec!["rpop", "nonexistent"], &store)?;
+        let app_context = AppContext::default();
+        let response = execute_command(vec!["rpop", "nonexistent"], &app_context)?;
         assert_eq!(response, b"$-1\r\n"); // Null bulk string
         Ok(())
     }
@@ -409,45 +404,48 @@ mod tests {
 
     #[test]
     fn test_list_string_type_separation() -> Result<()> {
-        let store = Store::new();
+        let app_context = AppContext::default();
 
         // Set a string value
-        execute_command(vec!["set", "mykey", "stringvalue"], &store)?;
-        assert_string_value(&store, "mykey", "stringvalue");
+        execute_command(vec!["set", "mykey", "stringvalue"], &app_context)?;
+        assert_string_value(&app_context, "mykey", "stringvalue");
 
         // RPUSH should replace the string with a list
-        execute_command(vec!["rpush", "mykey", "listvalue"], &store)?;
-        assert_list_value(&store, "mykey", vec!["listvalue"]);
+        execute_command(vec!["rpush", "mykey", "listvalue"], &app_context)?;
+        assert_list_value(&app_context, "mykey", vec!["listvalue"]);
 
         Ok(())
     }
 
     #[test]
     fn test_get_on_list_returns_none() -> Result<()> {
-        let store = Store::new();
-        execute_command(vec!["rpush", "listkey", "value"], &store)?;
+        let app_context = AppContext::default();
+        execute_command(vec!["rpush", "listkey", "value"], &app_context)?;
 
         // GET should return None for a list key
-        let response = execute_command(vec!["get", "listkey"], &store)?;
+        let response = execute_command(vec!["get", "listkey"], &app_context)?;
         assert_eq!(response, b"$-1\r\n"); // Null bulk string
         Ok(())
     }
 
     #[test]
     fn test_multiple_rpop_operations() -> Result<()> {
-        let store = Store::new();
-        execute_command(vec!["rpush", "stack", "first", "second", "third"], &store)?;
+        let app_context = AppContext::default();
+        execute_command(
+            vec!["rpush", "stack", "first", "second", "third"],
+            &app_context,
+        )?;
 
-        let response1 = execute_command(vec!["rpop", "stack"], &store)?;
+        let response1 = execute_command(vec!["rpop", "stack"], &app_context)?;
         assert_eq!(response1, b"$5\r\nthird\r\n");
 
-        let response2 = execute_command(vec!["rpop", "stack"], &store)?;
+        let response2 = execute_command(vec!["rpop", "stack"], &app_context)?;
         assert_eq!(response2, b"$6\r\nsecond\r\n");
 
-        let response3 = execute_command(vec!["rpop", "stack"], &store)?;
+        let response3 = execute_command(vec!["rpop", "stack"], &app_context)?;
         assert_eq!(response3, b"$5\r\nfirst\r\n");
 
-        let response4 = execute_command(vec!["rpop", "stack"], &store)?;
+        let response4 = execute_command(vec!["rpop", "stack"], &app_context)?;
         assert_eq!(response4, b"$-1\r\n"); // Empty now
 
         Ok(())
@@ -467,10 +465,7 @@ mod tests {
         );
 
         // Verify the command returns the expected PONG response
-        let store = Store::new();
-        let config = Config::default();
-        let replication_role = Role::default();
-        let app_context = AppContext::new(&store, &config, &replication_role);
+        let app_context = AppContext::default();
         let response = command.unwrap().execute(&app_context)?;
         assert_eq!(response, b"+PONG\r\n");
 
@@ -557,10 +552,7 @@ mod tests {
         );
 
         // Verify the command returns the expected PONG response
-        let store = Store::new();
-        let config = Config::default();
-        let replication_role = Role::default();
-        let app_context = AppContext::new(&store, &config, &replication_role);
+        let app_context = AppContext::default();
         let response = command.unwrap().execute(&app_context)?;
         assert_eq!(response, b"$3\r\nhey\r\n");
 
@@ -750,10 +742,10 @@ mod tests {
 
     #[test]
     fn test_keys() -> Result<()> {
-        let store = Store::new();
+        let app_context = AppContext::default();
 
-        execute_command(vec!["set", "mykey", "stringvalue"], &store)?;
-        let response = execute_command(vec!["keys", "*"], &store)?;
+        execute_command(vec!["set", "mykey", "stringvalue"], &app_context)?;
+        let response = execute_command(vec!["keys", "*"], &app_context)?;
         assert_eq!(response, b"*1\r\n$5\r\nmykey\r\n");
 
         Ok(())

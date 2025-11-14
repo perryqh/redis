@@ -18,11 +18,12 @@ async fn main() -> Result<()> {
     let config = Config::new(args)?;
     let store = build_store(&config).await?;
     let replication_role = build_replication(&config).await?;
+    let app_context = AppContext::from_arc(store, Arc::new(config), replication_role);
 
-    let listener = TcpListener::bind(&config.server_bind_address()).await?;
+    let listener = TcpListener::bind(&app_context.config.server_bind_address()).await?;
     println!(
         "Redis server listening on {}",
-        &config.server_bind_address()
+        &app_context.config.server_bind_address()
     );
 
     // Accept connections in a loop
@@ -30,15 +31,12 @@ async fn main() -> Result<()> {
         let (socket, peer_addr) = listener.accept().await?;
         println!("Accepted connection from: {}", peer_addr);
 
-        // Clone the Arc for the spawned task
-        let store_clone = Arc::clone(&store);
-        let config_clone = config.clone();
-        let replication_role_clone = Arc::clone(&replication_role);
+        // Clone context for the spawned task
+        let app_context = app_context.clone();
 
         // Spawn a new task to handle this connection
         tokio::spawn(async move {
-            let app_context = AppContext::new(&store_clone, &config_clone, &replication_role_clone);
-            if let Err(e) = handle_connection(socket, &app_context).await {
+            if let Err(e) = handle_connection(socket, app_context).await {
                 eprintln!("Error handling connection from {}: {}", peer_addr, e);
             }
         });

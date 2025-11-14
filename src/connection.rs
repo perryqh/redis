@@ -17,12 +17,9 @@ use crate::resp::parse_command;
 ///
 /// # Errors
 /// Returns an error if there's an I/O failure or command parsing error
-pub async fn handle_connection<'a>(
-    mut socket: TcpStream,
-    app_context: &'a AppContext<'a>,
-) -> Result<()> {
+pub async fn handle_connection(mut socket: TcpStream, app_context: AppContext) -> Result<()> {
     let (reader, writer) = socket.split();
-    handle_connection_impl(reader, writer, app_context).await
+    handle_connection_impl(reader, writer, &app_context).await
 }
 
 /// Generic connection handler that works with any async reader/writer
@@ -55,7 +52,7 @@ pub async fn handle_connection<'a>(
 /// let store = Store::new();
 /// let config = Config::default();
 /// let replication_role = Role::default();
-/// let app_context = AppContext::new(&store, &config, &replication_role);
+/// let app_context = AppContext::new(store, config, replication_role);
 /// let reader = Cursor::new(b"*1\r\n$4\r\nPING\r\n".to_vec());
 /// let mut writer = Vec::new();
 /// handle_connection_impl(reader, &mut writer, &app_context).await?;
@@ -63,10 +60,10 @@ pub async fn handle_connection<'a>(
 /// # Ok(())
 /// # }
 /// ```
-pub async fn handle_connection_impl<'a, R, W>(
+pub async fn handle_connection_impl<R, W>(
     mut reader: R,
     mut writer: W,
-    app_context: &'a AppContext<'a>,
+    app_context: &AppContext,
 ) -> Result<()>
 where
     R: AsyncRead + Unpin,
@@ -98,9 +95,6 @@ where
 mod tests {
 
     use super::*;
-    use crate::config::Config;
-    use crate::replication::Role;
-    use crate::store::Store;
     use std::io::Cursor;
 
     fn ping_command() -> Vec<u8> {
@@ -112,10 +106,7 @@ mod tests {
         // Use in-memory buffers for testing
         let mut writer = Vec::new();
         let reader = Cursor::new(ping_command());
-        let store = Store::new();
-        let config = Config::default();
-        let replication_role = Role::default();
-        let app_context = AppContext::new(&store, &config, &replication_role);
+        let app_context = AppContext::default();
 
         // Call the generic handler
         handle_connection_impl(reader, &mut writer, &app_context).await?;
@@ -135,10 +126,7 @@ mod tests {
         // Use in-memory buffers for testing instead of real TCP connections
         let reader = Cursor::new(input.send);
         let mut writer = Vec::new();
-        let store = Store::new();
-        let config = Config::default();
-        let replication_role = Role::default();
-        let app_context = AppContext::new(&store, &config, &replication_role);
+        let app_context = AppContext::default();
 
         // Call the generic handler
         handle_connection_impl(reader, &mut writer, &app_context).await?;
@@ -171,17 +159,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_set_get_commands() -> Result<()> {
-        let store = Store::new();
-        let config = Config::default();
-        let replication_role = Role::default();
-        let app_context = AppContext::new(&store, &config, &replication_role);
+        let app_context = AppContext::default();
 
         // Test SET command
         let reader = Cursor::new(b"*3\r\n$3\r\nSET\r\n$4\r\ntaco\r\n$5\r\nsmell\r\n".to_vec());
         let mut writer = Vec::new();
         handle_connection_impl(reader, &mut writer, &app_context).await?;
         assert_eq!(writer, b"+OK\r\n".to_vec());
-        assert_eq!(store.get_string("taco"), Some("smell".to_string()));
+        assert_eq!(
+            app_context.store.get_string("taco"),
+            Some("smell".to_string())
+        );
 
         // Test another SET command with longer value
         let reader = Cursor::new(
@@ -191,7 +179,7 @@ mod tests {
         handle_connection_impl(reader, &mut writer, &app_context).await?;
         assert_eq!(writer, b"+OK\r\n".to_vec());
         assert_eq!(
-            store.get_string("phrase"),
+            app_context.store.get_string("phrase"),
             Some("should have been a rake task".to_string())
         );
 
@@ -212,10 +200,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_multiple_commands_in_buffer() -> Result<()> {
-        let store = Store::new();
-        let config = Config::default();
-        let replication_role = Role::default();
-        let app_context = AppContext::new(&store, &config, &replication_role);
+        let app_context = AppContext::default();
 
         // Send multiple commands in one buffer
         let commands = b"*1\r\n$4\r\nPING\r\n*2\r\n$4\r\nECHO\r\n$5\r\nhello\r\n";
@@ -232,10 +217,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_multiple_writer_types() -> Result<()> {
-        let store = Store::new();
-        let config = Config::default();
-        let replication_role = Role::default();
-        let app_context = AppContext::new(&store, &config, &replication_role);
+        let app_context = AppContext::default();
 
         // Test with Vec<u8> as writer
         let reader1 = Cursor::new(ping_command());
@@ -254,10 +236,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_set_with_ex_option() -> Result<()> {
-        let store = Store::new();
-        let config = Config::default();
-        let replication_role = Role::default();
-        let app_context = AppContext::new(&store, &config, &replication_role);
+        let app_context = AppContext::default();
 
         // SET key value EX 1 (expire in 1 second)
         let reader = Cursor::new(
@@ -266,21 +245,21 @@ mod tests {
         let mut writer = Vec::new();
         handle_connection_impl(reader, &mut writer, &app_context).await?;
         assert_eq!(writer, b"+OK\r\n");
-        assert_eq!(store.get_string("testex"), Some("value".to_string()));
+        assert_eq!(
+            app_context.store.get_string("testex"),
+            Some("value".to_string())
+        );
 
         // Wait for expiration
         tokio::time::sleep(tokio::time::Duration::from_millis(1100)).await;
-        assert_eq!(store.get_string("testex"), None);
+        assert_eq!(app_context.store.get_string("testex"), None);
 
         Ok(())
     }
 
     #[tokio::test]
     async fn test_set_with_px_option() -> Result<()> {
-        let store = Store::new();
-        let config = Config::default();
-        let replication_role = Role::default();
-        let app_context = AppContext::new(&store, &config, &replication_role);
+        let app_context = AppContext::default();
 
         // SET key value PX 500 (expire in 500 milliseconds)
         let reader = Cursor::new(
@@ -289,21 +268,21 @@ mod tests {
         let mut writer = Vec::new();
         handle_connection_impl(reader, &mut writer, &app_context).await?;
         assert_eq!(writer, b"+OK\r\n");
-        assert_eq!(store.get_string("testpx"), Some("value".to_string()));
+        assert_eq!(
+            app_context.store.get_string("testpx"),
+            Some("value".to_string())
+        );
 
         // Wait for expiration
         tokio::time::sleep(tokio::time::Duration::from_millis(600)).await;
-        assert_eq!(store.get_string("testpx"), None);
+        assert_eq!(app_context.store.get_string("testpx"), None);
 
         Ok(())
     }
 
     #[tokio::test]
     async fn test_set_get_with_expiration_workflow() -> Result<()> {
-        let store = Store::new();
-        let config = Config::default();
-        let replication_role = Role::default();
-        let app_context = AppContext::new(&store, &config, &replication_role);
+        let app_context = AppContext::default();
 
         // SET with expiration
         let set_reader = Cursor::new(
@@ -334,10 +313,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_set_overwrites_expiration() -> Result<()> {
-        let store = Store::new();
-        let config = Config::default();
-        let replication_role = Role::default();
-        let app_context = AppContext::new(&store, &config, &replication_role);
+        let app_context = AppContext::default();
 
         // SET with short expiration
         let set1_reader = Cursor::new(
@@ -368,10 +344,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_multiple_keys_with_different_expirations() -> Result<()> {
-        let store = Store::new();
-        let config = Config::default();
-        let replication_role = Role::default();
-        let app_context = AppContext::new(&store, &config, &replication_role);
+        let app_context = AppContext::default();
 
         // SET key1 with long expiration
         let reader1 = Cursor::new(
@@ -396,9 +369,15 @@ mod tests {
         tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
 
         // Check all keys
-        assert_eq!(store.get_string("key1"), Some("val1".to_string())); // Still valid
-        assert_eq!(store.get_string("key2"), None); // Expired
-        assert_eq!(store.get_string("key3"), Some("val3".to_string())); // No expiration
+        assert_eq!(
+            app_context.store.get_string("key1"),
+            Some("val1".to_string())
+        ); // Still valid
+        assert_eq!(app_context.store.get_string("key2"), None); // Expired
+        assert_eq!(
+            app_context.store.get_string("key3"),
+            Some("val3".to_string())
+        ); // No expiration
 
         Ok(())
     }
