@@ -15,6 +15,9 @@ pub struct Args {
     /// Server port
     #[arg(long, default_value = "6379")]
     pub port: u16,
+
+    #[arg(long)]
+    pub replicaof: Option<String>,
 }
 
 #[cfg(test)]
@@ -27,5 +30,6 @@ mod tests {
         assert_eq!(args.dir, "~/.redis-rust");
         assert_eq!(args.dbfilename, "dump.rdb");
         assert_eq!(args.port, 6379);
+        assert_eq!(args.replicaof, None);
     }
 }

@@ -49,6 +49,7 @@ mod tests {
             dir: String::from("/tmp"),
             dbfilename: String::from("test.rdb"),
             port: 6379,
+            replicaof: None,
         };
 
         let config = Config::new(args).unwrap();

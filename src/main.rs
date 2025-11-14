@@ -123,6 +123,7 @@ mod tests {
             dir: "/custom/dir".to_string(),
             dbfilename: "custom.rdb".to_string(),
             port: 6380,
+            replicaof: None,
         };
 
         let config = Config::new(args).unwrap();
