@@ -14,7 +14,7 @@ pub struct Args {
 
     /// Server port
     #[arg(long, default_value = "6379")]
-    pub server_port: u16,
+    pub port: u16,
 }
 
 #[cfg(test)]
@@ -26,6 +26,6 @@ mod tests {
         let args = Args::parse_from(["redis-rust"]);
         assert_eq!(args.dir, "~/.redis-rust");
         assert_eq!(args.dbfilename, "dump.rdb");
-        assert_eq!(args.server_port, 6379);
+        assert_eq!(args.port, 6379);
     }
 }
