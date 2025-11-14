@@ -3,7 +3,8 @@ use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime};
 
 use anyhow::Result;
-use regex::Regex;
+
+use crate::matcher::is_match;
 
 /// The type of data that can be stored in Redis
 #[derive(Clone, Debug, PartialEq)]
@@ -285,11 +286,12 @@ impl Store<DataType> {
     }
 
     pub fn keys(&self, pattern: &str) -> Result<Vec<String>> {
-        // replace * with .* in pattern
-        let pattern = pattern.replace("*", ".*");
         let map = self.inner.read().unwrap();
-        let re = Regex::new(&pattern).unwrap();
-        let mut keys: Vec<String> = map.keys().filter(|key| re.is_match(key)).cloned().collect();
+        let mut keys: Vec<String> = map
+            .keys()
+            .filter(|key| is_match(key, pattern))
+            .cloned()
+            .collect();
         keys.sort();
         Ok(keys)
     }
@@ -469,6 +471,15 @@ mod tests {
 
         let keys = store.keys("key2").unwrap();
         assert_eq!(keys, vec!["key2".to_string()]);
+
+        let keys = store.keys("key").unwrap();
+        assert!(keys.is_empty());
+
+        let keys = store.keys("*ey2").unwrap();
+        assert_eq!(keys, vec!["key2".to_string()]);
+
+        let keys = store.keys("*ey*").unwrap();
+        assert_eq!(keys, vec!["key1".to_string(), "key2".to_string()]);
     }
 
     #[test]

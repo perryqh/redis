@@ -4,6 +4,7 @@ pub mod config;
 pub mod connection;
 pub mod context;
 pub mod datatypes;
+pub mod matcher;
 pub mod rdb;
 pub mod resp;
 pub mod store;
