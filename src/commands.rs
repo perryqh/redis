@@ -266,6 +266,7 @@ impl RedisCommand for KeysCommand {
 mod tests {
     use crate::config::Config;
     use crate::datatypes::{BulkString, Integer, SimpleString};
+    use crate::replication::Role;
     use crate::store::Store;
     use std::thread;
     use std::time::Duration;
@@ -301,12 +302,14 @@ mod tests {
     fn test_config_get_command() -> Result<()> {
         let store = Store::new();
         let config = Config::default();
-        let app_context = AppContext::new(&store, &config);
+        let replication_role = Role::default();
+        let app_context = AppContext::new(&store, &config, &replication_role);
         let command = ConfigCommand::new(&[bulk_string("GET"), bulk_string("dir")])?;
         let response = command.execute(&app_context)?;
         assert_eq!(response, b"*2\r\n$3\r\ndir\r\n$12\r\n~/redis-rust\r\n");
 
-        let app_context = AppContext::new(&store, &config);
+        let replication_role = Role::default();
+        let app_context = AppContext::new(&store, &config, &replication_role);
         let command = ConfigCommand::new(&[bulk_string("GET"), bulk_string("dbfilename")])?;
         let response = command.execute(&app_context)?;
         assert_eq!(response, b"*2\r\n$10\r\ndbfilename\r\n$8\r\ndump.rdb\r\n");
@@ -318,7 +321,8 @@ mod tests {
     fn test_ping_command() {
         let store = Store::new();
         let config = Config::default();
-        let app_context = AppContext::new(&store, &config);
+        let replication_role = Role::default();
+        let app_context = AppContext::new(&store, &config, &replication_role);
         let command = PingCommand {};
         let response = command.execute(&app_context).unwrap();
         assert_eq!(response, b"+PONG\r\n");
@@ -328,7 +332,8 @@ mod tests {
     fn test_echo_command() {
         let store = Store::new();
         let config = Config::default();
-        let app_context = AppContext::new(&store, &config);
+        let replication_role = Role::default();
+        let app_context = AppContext::new(&store, &config, &replication_role);
         let command = EchoCommand::new(&[bulk_string("Hello")]);
         let response = command.execute(&app_context).unwrap();
         assert_eq!(response, b"$5\r\nHello\r\n");
@@ -338,7 +343,8 @@ mod tests {
     fn test_set_command_basic() {
         let store = Store::new();
         let config = Config::default();
-        let app_context = AppContext::new(&store, &config);
+        let replication_role = Role::default();
+        let app_context = AppContext::new(&store, &config, &replication_role);
         let command = SetCommand::new(&set_command_args("mykey", "myvalue")).unwrap();
         let response = command.execute(&app_context).unwrap();
 
@@ -350,7 +356,8 @@ mod tests {
     fn test_set_command_overwrite() {
         let store = Store::new();
         let config = Config::default();
-        let app_context = AppContext::new(&store, &config);
+        let replication_role = Role::default();
+        let app_context = AppContext::new(&store, &config, &replication_role);
 
         // Set initial value
         let command1 = SetCommand::new(&set_command_args("key1", "value1")).unwrap();
@@ -367,7 +374,8 @@ mod tests {
     fn test_set_command_with_ex_option() {
         let store = Store::new();
         let config = Config::default();
-        let app_context = AppContext::new(&store, &config);
+        let replication_role = Role::default();
+        let app_context = AppContext::new(&store, &config, &replication_role);
         let command = SetCommand::new(&set_command_with_expiration(
             "tempkey",
             "tempvalue",
@@ -389,7 +397,8 @@ mod tests {
     fn test_set_command_with_px_option() {
         let store = Store::new();
         let config = Config::default();
-        let app_context = AppContext::new(&store, &config);
+        let replication_role = Role::default();
+        let app_context = AppContext::new(&store, &config, &replication_role);
         let command = SetCommand::new(&set_command_with_expiration(
             "tempkey2",
             "tempvalue2",
@@ -431,7 +440,8 @@ mod tests {
     fn test_set_command_without_ttl() {
         let store = Store::new();
         let config = Config::default();
-        let app_context = AppContext::new(&store, &config);
+        let replication_role = Role::default();
+        let app_context = AppContext::new(&store, &config, &replication_role);
         let command = SetCommand::new(&set_command_args("persistent", "forever")).unwrap();
         assert!(command.ttl.is_none());
 
@@ -444,7 +454,8 @@ mod tests {
     fn test_keys_command() -> Result<()> {
         let store = Store::new();
         let config = Config::default();
-        let app_context = AppContext::new(&store, &config);
+        let replication_role = Role::default();
+        let app_context = AppContext::new(&store, &config, &replication_role);
         let command = SetCommand::new(&set_command_args("foo", "bar"))?;
         command.execute(&app_context)?;
 
@@ -459,7 +470,8 @@ mod tests {
     fn test_set_command_replaces_ttl() {
         let store = Store::new();
         let config = Config::default();
-        let app_context = AppContext::new(&store, &config);
+        let replication_role = Role::default();
+        let app_context = AppContext::new(&store, &config, &replication_role);
 
         // Set with TTL
         let command1 =
@@ -480,7 +492,8 @@ mod tests {
     fn test_get_command_existing_key() {
         let store = Store::new();
         let config = Config::default();
-        let app_context = AppContext::new(&store, &config);
+        let replication_role = Role::default();
+        let app_context = AppContext::new(&store, &config, &replication_role);
         store.set_string("existing".to_string(), "value".to_string());
 
         let command = GetCommand::new(&[bulk_string("existing")]).unwrap();
@@ -493,7 +506,8 @@ mod tests {
     fn test_get_command_nonexistent_key() {
         let store = Store::new();
         let config = Config::default();
-        let app_context = AppContext::new(&store, &config);
+        let replication_role = Role::default();
+        let app_context = AppContext::new(&store, &config, &replication_role);
 
         let command = GetCommand::new(&[bulk_string("nonexistent")]).unwrap();
         let response = command.execute(&app_context).unwrap();
@@ -505,7 +519,8 @@ mod tests {
     fn test_get_command_expired_key() {
         let store: Store = Store::new();
         let config = Config::default();
-        let app_context = AppContext::new(&store, &config);
+        let replication_role = Role::default();
+        let app_context = AppContext::new(&store, &config, &replication_role);
         store.set_string_with_expiration(
             "expired".to_string(),
             "value".to_string(),
@@ -648,7 +663,8 @@ mod tests {
     fn test_rpush_command_single_value() {
         let store = Store::new();
         let config = Config::default();
-        let app_context = AppContext::new(&store, &config);
+        let replication_role = Role::default();
+        let app_context = AppContext::new(&store, &config, &replication_role);
         let command = RpushCommand::new(&[bulk_string("mylist"), bulk_string("value1")]).unwrap();
         let response = command.execute(&app_context).unwrap();
         assert_eq!(response, b":1\r\n");
@@ -658,7 +674,8 @@ mod tests {
     fn test_rpush_command_multiple_values() {
         let store = Store::new();
         let config = Config::default();
-        let app_context = AppContext::new(&store, &config);
+        let replication_role = Role::default();
+        let app_context = AppContext::new(&store, &config, &replication_role);
         let command = RpushCommand::new(&[
             bulk_string("mylist"),
             bulk_string("a"),
@@ -674,7 +691,8 @@ mod tests {
     fn test_rpush_command_append() {
         let store = Store::new();
         let config = Config::default();
-        let app_context = AppContext::new(&store, &config);
+        let replication_role = Role::default();
+        let app_context = AppContext::new(&store, &config, &replication_role);
         store.rpush("mylist".to_string(), "existing".to_string());
         let command = RpushCommand::new(&[bulk_string("mylist"), bulk_string("new")]).unwrap();
         let response = command.execute(&app_context).unwrap();
@@ -692,7 +710,8 @@ mod tests {
     fn test_rpop_command_existing_list() {
         let store = Store::new();
         let config = Config::default();
-        let app_context = AppContext::new(&store, &config);
+        let replication_role = Role::default();
+        let app_context = AppContext::new(&store, &config, &replication_role);
         store.rpush("mylist".to_string(), "value1".to_string());
         store.rpush("mylist".to_string(), "value2".to_string());
 
@@ -705,7 +724,8 @@ mod tests {
     fn test_rpop_command_nonexistent_key() {
         let store = Store::new();
         let config = Config::default();
-        let app_context = AppContext::new(&store, &config);
+        let replication_role = Role::default();
+        let app_context = AppContext::new(&store, &config, &replication_role);
         let command = RpopCommand::new(&[bulk_string("nonexistent")]).unwrap();
         let response = command.execute(&app_context).unwrap();
         assert_eq!(response, b"$-1\r\n");
@@ -715,7 +735,8 @@ mod tests {
     fn test_rpop_command_empty_list() {
         let store = Store::new();
         let config = Config::default();
-        let app_context = AppContext::new(&store, &config);
+        let replication_role = Role::default();
+        let app_context = AppContext::new(&store, &config, &replication_role);
         store.rpush("mylist".to_string(), "only".to_string());
         store.rpop("mylist");
 
@@ -728,7 +749,8 @@ mod tests {
     fn test_rpop_command_on_string_key() {
         let store = Store::new();
         let config = Config::default();
-        let app_context = AppContext::new(&store, &config);
+        let replication_role = Role::default();
+        let app_context = AppContext::new(&store, &config, &replication_role);
         store.set_string("stringkey".to_string(), "value".to_string());
 
         let command = RpopCommand::new(&[bulk_string("stringkey")]).unwrap();

@@ -264,6 +264,7 @@ mod tests {
     use super::*;
     use crate::config::Config;
     use crate::context::AppContext;
+    use crate::replication::Role;
     use crate::store::{DataType, Store};
 
     fn redis_array_of_bulk_strings(strs: Vec<&str>) -> Vec<u8> {
@@ -290,7 +291,8 @@ mod tests {
         let command = parse_command(&mut cursor)?
             .ok_or_else(|| anyhow::anyhow!("Failed to parse command"))?;
         let config = Config::default();
-        let app_context = AppContext::new(store, &config);
+        let replication_role = Role::default();
+        let app_context = AppContext::new(store, &config, &replication_role);
         command.execute(&app_context)
     }
 
@@ -467,7 +469,8 @@ mod tests {
         // Verify the command returns the expected PONG response
         let store = Store::new();
         let config = Config::default();
-        let app_context = AppContext::new(&store, &config);
+        let replication_role = Role::default();
+        let app_context = AppContext::new(&store, &config, &replication_role);
         let response = command.unwrap().execute(&app_context)?;
         assert_eq!(response, b"+PONG\r\n");
 
@@ -556,7 +559,8 @@ mod tests {
         // Verify the command returns the expected PONG response
         let store = Store::new();
         let config = Config::default();
-        let app_context = AppContext::new(&store, &config);
+        let replication_role = Role::default();
+        let app_context = AppContext::new(&store, &config, &replication_role);
         let response = command.unwrap().execute(&app_context)?;
         assert_eq!(response, b"$3\r\nhey\r\n");
 

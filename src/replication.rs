@@ -6,6 +6,12 @@ pub enum Role {
     Slave(SlaveReplication),
 }
 
+impl Default for Role {
+    fn default() -> Self {
+        Role::Master(MasterReplication::default())
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct MasterReplication {
     pub replication_id: String,

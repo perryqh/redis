@@ -8,6 +8,7 @@ use codecrafters_redis::config::Config;
 use codecrafters_redis::connection::handle_connection;
 use codecrafters_redis::context::AppContext;
 use codecrafters_redis::rdb::parse_rdb_file;
+use codecrafters_redis::replication::{MasterReplication, Role};
 use codecrafters_redis::store::Store;
 use tokio::net::TcpListener;
 
@@ -16,6 +17,7 @@ async fn main() -> Result<()> {
     let args = Args::parse();
     let config = Config::new(args)?;
     let store = build_store(&config).await?;
+    let replication_role = build_replication(&config).await?;
 
     let listener = TcpListener::bind(&config.server_bind_address()).await?;
     println!(
@@ -31,10 +33,11 @@ async fn main() -> Result<()> {
         // Clone the Arc for the spawned task
         let store_clone = Arc::clone(&store);
         let config_clone = config.clone();
+        let replication_role_clone = Arc::clone(&replication_role);
 
         // Spawn a new task to handle this connection
         tokio::spawn(async move {
-            let app_context = AppContext::new(&store_clone, &config_clone);
+            let app_context = AppContext::new(&store_clone, &config_clone, &replication_role_clone);
             if let Err(e) = handle_connection(socket, &app_context).await {
                 eprintln!("Error handling connection from {}: {}", peer_addr, e);
             }
@@ -50,6 +53,10 @@ async fn main() -> Result<()> {
             }
         }
         Ok(Arc::new(Store::new()))
+    }
+
+    async fn build_replication(_config: &Config) -> Result<Arc<Role>> {
+        Ok(Arc::new(Role::Master(MasterReplication::default())))
     }
 }
 
