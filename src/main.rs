@@ -63,6 +63,7 @@ mod tests {
         let config = Config {
             dir: "/nonexistent/directory".to_string(),
             dbfilename: "nonexistent.rdb".to_string(),
+            server_port: 6379,
         };
 
         let result = build_store(&config).await;
@@ -84,6 +85,7 @@ mod tests {
         let config = Config {
             dir,
             dbfilename: filename,
+            server_port: 6379,
         };
 
         let result = build_store(&config).await;
@@ -98,6 +100,7 @@ mod tests {
         let config = Config {
             dir: "/tmp".to_string(),
             dbfilename: "nonexistent_test_file_12345.rdb".to_string(),
+            server_port: 6379,
         };
 
         let result = build_store(&config).await;
@@ -112,11 +115,13 @@ mod tests {
         let args = Args {
             dir: "/custom/dir".to_string(),
             dbfilename: "custom.rdb".to_string(),
+            server_port: 6380,
         };
 
         let config = Config::new(args).unwrap();
         assert_eq!(config.dir, "/custom/dir");
         assert_eq!(config.dbfilename, "custom.rdb");
+        assert_eq!(config.server_port, 6380);
     }
 
     #[test]
@@ -124,6 +129,7 @@ mod tests {
         let config = Config {
             dir: "/var/redis".to_string(),
             dbfilename: "dump.rdb".to_string(),
+            server_port: 6379,
         };
 
         assert_eq!(config.full_rdb_path(), "/var/redis/dump.rdb");
@@ -141,6 +147,7 @@ mod tests {
         let config1 = Config {
             dir: "/test/dir".to_string(),
             dbfilename: "test.rdb".to_string(),
+            server_port: 6380,
         };
 
         let config2 = config1.clone();
@@ -153,6 +160,7 @@ mod tests {
         let config = Config {
             dir: "".to_string(),
             dbfilename: "dump.rdb".to_string(),
+            server_port: 6379,
         };
 
         let result = build_store(&config).await;
@@ -167,6 +175,7 @@ mod tests {
         let config = Config {
             dir: "/nonexistent".to_string(),
             dbfilename: "test.rdb".to_string(),
+            server_port: 6379,
         };
 
         let result = build_store(&config).await;
@@ -185,6 +194,7 @@ mod tests {
         let config = Config {
             dir: "/path/with spaces/and-dashes".to_string(),
             dbfilename: "my-dump_file.rdb".to_string(),
+            server_port: 6379,
         };
 
         assert_eq!(
@@ -198,23 +208,11 @@ mod tests {
         let config = Config {
             dir: "./tests/fixtures".to_string(),
             dbfilename: "nonexistent_file.rdb".to_string(),
+            server_port: 6379,
         };
 
         let result = build_store(&config).await;
         assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_args_default_values() {
-        // This tests that Args has the expected default values
-        // when parsed from empty command line
-        let args = Args {
-            dir: "~/.redis-rust".to_string(),
-            dbfilename: "dump.rdb".to_string(),
-        };
-
-        assert_eq!(args.dir, "~/.redis-rust");
-        assert_eq!(args.dbfilename, "dump.rdb");
     }
 
     async fn build_store(config: &Config) -> Result<Arc<Store>> {

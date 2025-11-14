@@ -5,6 +5,7 @@ use anyhow::Result;
 pub struct Config {
     pub dir: String,
     pub dbfilename: String,
+    pub server_port: u16,
 }
 
 impl Config {
@@ -12,6 +13,7 @@ impl Config {
         Ok(Config {
             dir: args.dir,
             dbfilename: args.dbfilename,
+            server_port: args.server_port,
         })
     }
 
@@ -25,6 +27,7 @@ impl Default for Config {
         Config {
             dir: String::from("~/redis-rust"),
             dbfilename: String::from("dump.rdb"),
+            server_port: 6379,
         }
     }
 }
