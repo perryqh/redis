@@ -20,7 +20,8 @@ pub struct MasterReplication {
 
 #[derive(Debug, Clone)]
 pub struct SlaveReplication {
-    pub master_replication_id: String,
+    pub master_host: String,
+    pub master_port: u16,
 }
 
 impl Default for MasterReplication {
@@ -38,9 +39,19 @@ impl Default for MasterReplication {
 }
 
 impl SlaveReplication {
-    pub fn new(master_replication_id: String) -> Self {
+    pub fn new(master_host: String, master_port: u16) -> Self {
         SlaveReplication {
-            master_replication_id,
+            master_host,
+            master_port,
+        }
+    }
+}
+
+impl Default for SlaveReplication {
+    fn default() -> Self {
+        SlaveReplication {
+            master_host: "127.0.0.1".to_string(),
+            master_port: 6379,
         }
     }
 }
@@ -74,10 +85,8 @@ mod tests {
 
     #[test]
     fn test_slave_replication() {
-        let slave_replication = SlaveReplication::new("master_replication_id".to_string());
-        assert_eq!(
-            slave_replication.master_replication_id,
-            "master_replication_id"
-        );
+        let slave_replication = SlaveReplication::new("master_host".to_string(), 6379);
+        assert_eq!(slave_replication.master_host, "master_host");
+        assert_eq!(slave_replication.master_port, 6379);
     }
 }

@@ -813,10 +813,7 @@ mod tests {
 
     #[test]
     fn test_info_command_with_replication_slave() -> Result<()> {
-        let master_replication = MasterReplication::default();
-        let slave_replication = SlaveReplication {
-            master_replication_id: master_replication.replication_id,
-        };
+        let slave_replication = SlaveReplication::default();
         let app_context = AppContext {
             replication_role: Arc::new(Role::Slave(slave_replication.clone())),
             ..Default::default()
