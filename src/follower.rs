@@ -1,7 +1,10 @@
+use std::io::Cursor;
+
 use crate::{
     context::AppContext,
-    datatypes::{Array, BulkString, RedisDataType},
+    datatypes::{Array, BulkString, RedisDataType, SimpleString},
     replication::ReplicationRole,
+    resp::parse_data_type,
 };
 use anyhow::{bail, ensure, Result};
 use tokio::{
@@ -33,7 +36,29 @@ impl Follower {
         let (mut reader, mut writer) = stream.split();
         self.ping_leader(&mut reader, &mut writer).await?;
         self.repl_conf_listening(&mut reader, &mut writer).await?;
-        self.repl_conf_capa(&mut reader, &mut writer).await
+        self.repl_conf_capa(&mut reader, &mut writer).await?;
+        self.psync(&mut reader, &mut writer).await
+    }
+
+    async fn psync<Reader, Writer>(
+        &self,
+        reader: &mut Reader,
+        writer: &mut Writer,
+    ) -> anyhow::Result<()>
+    where
+        Reader: AsyncReadExt + Unpin,
+        Writer: AsyncWriteExt + Unpin,
+    {
+        let conf_array = Array::new(vec![
+            Box::new(BulkString::new("PSYNC".to_string())),
+            Box::new(BulkString::new("?".to_string())),
+            Box::new(BulkString::new("-1".to_string())),
+        ]);
+        writer.write_all(&conf_array.to_bytes()?).await?;
+
+        let response_string = response_as_simple_string(reader).await?;
+        ensure!(response_string == "OK", "Unexpected response from master");
+        Ok(())
     }
 
     async fn repl_conf_capa<Reader, Writer>(
@@ -52,11 +77,8 @@ impl Follower {
         ]);
         writer.write_all(&conf_array.to_bytes()?).await?;
 
-        let mut buf = [0; 512];
-        let byte_count = reader.read(&mut buf).await?;
-        ensure!(byte_count > 0, "No data received from master");
-        let bytes = &buf[..byte_count];
-        ensure!(bytes == b"+OK\r\n", "Unexpected response from master");
+        let response_string = response_as_simple_string(reader).await?;
+        ensure!(response_string == "OK", "Unexpected response from master");
         Ok(())
     }
 
@@ -78,11 +100,8 @@ impl Follower {
         ]);
         writer.write_all(&conf_array.to_bytes()?).await?;
 
-        let mut buf = [0; 512];
-        let byte_count = reader.read(&mut buf).await?;
-        ensure!(byte_count > 0, "No data received from master");
-        let bytes = &buf[..byte_count];
-        ensure!(bytes == b"+OK\r\n", "Unexpected response from master");
+        let response_string = response_as_simple_string(reader).await?;
+        ensure!(response_string == "OK", "Unexpected response from master");
         Ok(())
     }
 
@@ -99,13 +118,33 @@ impl Follower {
         let ping_array = Array::new(vec![Box::new(ping_bulk)]);
         writer.write_all(&ping_array.to_bytes()?).await?;
 
-        let mut buf = [0; 512];
-        let byte_count = reader.read(&mut buf).await?;
-        ensure!(byte_count > 0, "No data received from master");
-        let bytes = &buf[..byte_count];
-        ensure!(bytes == b"+PONG\r\n", "Unexpected response from master");
+        let response_string = response_as_simple_string(reader).await?;
+        ensure!(response_string == "PONG", "Unexpected response from master");
         Ok(())
     }
+}
+
+async fn response_as_simple_string<Reader>(reader: &mut Reader) -> Result<String>
+where
+    Reader: AsyncReadExt + Unpin,
+{
+    let mut buf = [0; 512];
+    let byte_count = reader.read(&mut buf).await?;
+    ensure!(byte_count > 0, "No data received from master");
+    let mut bytes = Cursor::new(&buf[..byte_count]);
+    let response = parse_data_type(&mut bytes)?;
+    simple_string_from_response(response)
+}
+
+fn simple_string_from_response(response: Option<Box<dyn RedisDataType>>) -> Result<String> {
+    let data_type = response.ok_or_else(|| anyhow::anyhow!("No response received"))?;
+
+    let simple_string = data_type
+        .as_any()
+        .downcast_ref::<SimpleString>()
+        .ok_or_else(|| anyhow::anyhow!("Unexpected response type"))?;
+
+    Ok(simple_string.value.clone())
 }
 
 #[cfg(test)]
