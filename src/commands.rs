@@ -3,7 +3,7 @@ use std::time::Duration;
 use crate::{
     context::AppContext,
     datatypes::{Array, BulkString, Integer, NullBulkString, RedisDataType, SimpleString},
-    replication::Role,
+    replication::ReplicationRole,
 };
 use anyhow::{bail, Context, Result};
 
@@ -288,16 +288,16 @@ impl RedisCommand for InfoCommand {
         for section in &self.sections {
             match section {
                 InfoSection::Replication => match app_context.replication_role.as_ref() {
-                    Role::Master(master_replication) => {
+                    ReplicationRole::Leader(leader_replication) => {
                         info.push_str("role:master\n");
                         info.push_str("master_replid:");
-                        info.push_str(master_replication.replication_id.as_str());
+                        info.push_str(leader_replication.replication_id.as_str());
                         info.push('\n');
                         info.push_str("master_repl_offset:");
-                        info.push_str(master_replication.replication_offset.to_string().as_str());
+                        info.push_str(leader_replication.replication_offset.to_string().as_str());
                         info.push('\n');
                     }
-                    Role::Slave(_slave_replication) => {
+                    ReplicationRole::Follower(_follower_replication) => {
                         info.push_str("role:slave\n");
                     }
                 },
@@ -312,7 +312,7 @@ impl RedisCommand for InfoCommand {
 #[cfg(test)]
 mod tests {
     use crate::datatypes::{BulkString, Integer, SimpleString};
-    use crate::replication::{MasterReplication, SlaveReplication};
+    use crate::replication::{FollowerReplication, LeaderReplication};
     use std::sync::Arc;
     use std::thread;
     use std::time::Duration;
@@ -775,16 +775,16 @@ mod tests {
 
     #[test]
     fn test_info_command() -> Result<()> {
-        let master_replication = MasterReplication::default();
+        let leader_replication = LeaderReplication::default();
         let app_context = AppContext {
-            replication_role: Arc::new(Role::Master(master_replication.clone())),
+            replication_role: Arc::new(ReplicationRole::Leader(leader_replication.clone())),
             ..Default::default()
         };
         let command = InfoCommand::new(&[])?;
         let response = command.execute(&app_context)?;
         let expected_string = format!(
             "role:master\nmaster_replid:{}\nmaster_repl_offset:0\n",
-            master_replication.replication_id
+            leader_replication.replication_id
         );
         let expected = format!("${}\r\n{}\r\n", expected_string.len(), expected_string);
         let expected = expected.as_bytes();
@@ -794,9 +794,9 @@ mod tests {
 
     #[test]
     fn test_info_command_with_replication_master() -> Result<()> {
-        let master_replication = MasterReplication::default();
+        let master_replication = LeaderReplication::default();
         let app_context = AppContext {
-            replication_role: Arc::new(Role::Master(master_replication.clone())),
+            replication_role: Arc::new(ReplicationRole::Leader(master_replication.clone())),
             ..Default::default()
         };
         let command = InfoCommand::new(&[])?;
@@ -812,10 +812,10 @@ mod tests {
     }
 
     #[test]
-    fn test_info_command_with_replication_slave() -> Result<()> {
-        let slave_replication = SlaveReplication::default();
+    fn test_info_command_with_replication_follower() -> Result<()> {
+        let follower_replication = FollowerReplication::default();
         let app_context = AppContext {
-            replication_role: Arc::new(Role::Slave(slave_replication.clone())),
+            replication_role: Arc::new(ReplicationRole::Follower(follower_replication.clone())),
             ..Default::default()
         };
         let command = InfoCommand::new(&[])?;

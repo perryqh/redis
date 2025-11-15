@@ -1,57 +1,57 @@
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
-pub enum Role {
-    Master(MasterReplication),
-    Slave(SlaveReplication),
+pub enum ReplicationRole {
+    Leader(LeaderReplication),
+    Follower(FollowerReplication),
 }
 
-impl Default for Role {
+impl Default for ReplicationRole {
     fn default() -> Self {
-        Role::Master(MasterReplication::default())
+        ReplicationRole::Leader(LeaderReplication::default())
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct MasterReplication {
+pub struct LeaderReplication {
     pub replication_id: String,
     pub replication_offset: u64,
 }
 
 #[derive(Debug, Clone)]
-pub struct SlaveReplication {
-    pub master_host: String,
-    pub master_port: u16,
+pub struct FollowerReplication {
+    pub leader_host: String,
+    pub leader_port: u16,
 }
 
-impl Default for MasterReplication {
+impl Default for LeaderReplication {
     fn default() -> Self {
         let replication_id: String = format!("{}-{}", Uuid::new_v4(), Uuid::new_v4())
             .chars()
             .take(40)
             .collect();
 
-        MasterReplication {
+        LeaderReplication {
             replication_id,
             replication_offset: 0,
         }
     }
 }
 
-impl SlaveReplication {
-    pub fn new(master_host: String, master_port: u16) -> Self {
-        SlaveReplication {
-            master_host,
-            master_port,
+impl FollowerReplication {
+    pub fn new(leader_host: String, leader_port: u16) -> Self {
+        FollowerReplication {
+            leader_host,
+            leader_port,
         }
     }
 }
 
-impl Default for SlaveReplication {
+impl Default for FollowerReplication {
     fn default() -> Self {
-        SlaveReplication {
-            master_host: "127.0.0.1".to_string(),
-            master_port: 6379,
+        FollowerReplication {
+            leader_host: "127.0.0.1".to_string(),
+            leader_port: 6379,
         }
     }
 }
@@ -78,15 +78,15 @@ mod tests {
 
     #[test]
     fn test_master_replication() {
-        let master_replication = MasterReplication::default();
+        let master_replication = LeaderReplication::default();
         assert_eq!(master_replication.replication_id.len(), 40);
         assert_eq!(master_replication.replication_offset, 0);
     }
 
     #[test]
-    fn test_slave_replication() {
-        let slave_replication = SlaveReplication::new("master_host".to_string(), 6379);
-        assert_eq!(slave_replication.master_host, "master_host");
-        assert_eq!(slave_replication.master_port, 6379);
+    fn test_follower_replication() {
+        let follower_replication = FollowerReplication::new("master_host".to_string(), 6379);
+        assert_eq!(follower_replication.leader_host, "master_host");
+        assert_eq!(follower_replication.leader_port, 6379);
     }
 }

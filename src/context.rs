@@ -1,16 +1,16 @@
 use std::sync::Arc;
 
-use crate::{config::Config, replication::Role, store::Store};
+use crate::{config::Config, replication::ReplicationRole, store::Store};
 
 #[derive(Debug, Clone)]
 pub struct AppContext {
     pub store: Arc<Store>,
     pub config: Arc<Config>,
-    pub replication_role: Arc<Role>,
+    pub replication_role: Arc<ReplicationRole>,
 }
 
 impl AppContext {
-    pub fn new(store: Store, config: Config, replication_role: Role) -> Self {
+    pub fn new(store: Store, config: Config, replication_role: ReplicationRole) -> Self {
         Self {
             store: Arc::new(store),
             config: Arc::new(config),
@@ -18,7 +18,11 @@ impl AppContext {
         }
     }
 
-    pub fn from_arc(store: Arc<Store>, config: Arc<Config>, replication_role: Arc<Role>) -> Self {
+    pub fn from_arc(
+        store: Arc<Store>,
+        config: Arc<Config>,
+        replication_role: Arc<ReplicationRole>,
+    ) -> Self {
         Self {
             store,
             config,
@@ -32,7 +36,7 @@ impl Default for AppContext {
         Self {
             store: Arc::new(Store::default()),
             config: Arc::new(Config::default()),
-            replication_role: Arc::new(Role::default()),
+            replication_role: Arc::new(ReplicationRole::default()),
         }
     }
 }

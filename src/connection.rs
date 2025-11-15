@@ -46,12 +46,12 @@ pub async fn handle_connection(mut socket: TcpStream, app_context: AppContext) -
 /// use codecrafters_redis::store::Store;
 /// use codecrafters_redis::config::Config;
 /// use codecrafters_redis::context::AppContext;
-/// use codecrafters_redis::replication::Role;
+/// use codecrafters_redis::replication::ReplicationRole;
 ///
 /// # async fn example() -> anyhow::Result<()> {
 /// let store = Store::new();
 /// let config = Config::default();
-/// let replication_role = Role::default();
+/// let replication_role = ReplicationRole::default();
 /// let app_context = AppContext::new(store, config, replication_role);
 /// let reader = Cursor::new(b"*1\r\n$4\r\nPING\r\n".to_vec());
 /// let mut writer = Vec::new();

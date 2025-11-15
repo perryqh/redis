@@ -8,7 +8,7 @@ use codecrafters_redis::config::Config;
 use codecrafters_redis::connection::handle_connection;
 use codecrafters_redis::context::AppContext;
 use codecrafters_redis::rdb::parse_rdb_file;
-use codecrafters_redis::replication::{MasterReplication, Role, SlaveReplication};
+use codecrafters_redis::replication::{FollowerReplication, LeaderReplication, ReplicationRole};
 use codecrafters_redis::store::Store;
 use tokio::net::TcpListener;
 
@@ -25,6 +25,11 @@ async fn main() -> Result<()> {
         "Redis server listening on {}",
         &app_context.config.server_bind_address()
     );
+
+    if let ReplicationRole::Follower(follower_replication) = app_context.replication_role.as_ref() {
+        dbg!(follower_replication);
+        //follower_replication.start().await?;
+    }
 
     // Accept connections in a loop
     loop {
@@ -53,10 +58,14 @@ async fn main() -> Result<()> {
         Ok(Arc::new(Store::new()))
     }
 
-    async fn build_replication(_config: &Config, args: &Args) -> Result<Arc<Role>> {
+    async fn build_replication(_config: &Config, args: &Args) -> Result<Arc<ReplicationRole>> {
         match args.replicaof_host_port()? {
-            Some((host, port)) => Ok(Arc::new(Role::Slave(SlaveReplication::new(host, port)))),
-            None => Ok(Arc::new(Role::Master(MasterReplication::default()))),
+            Some((host, port)) => Ok(Arc::new(ReplicationRole::Follower(
+                FollowerReplication::new(host, port),
+            ))),
+            None => Ok(Arc::new(ReplicationRole::Leader(
+                LeaderReplication::default(),
+            ))),
         }
     }
 }
