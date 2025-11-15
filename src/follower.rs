@@ -57,7 +57,9 @@ impl Follower {
         writer.write_all(&conf_array.to_bytes()?).await?;
 
         let response_string = response_as_simple_string(reader).await?;
-        ensure!(response_string == "OK", "Unexpected response from master");
+        let (replication_id, offset) =
+            psync_response_to_replication_id_and_offset(&response_string)?;
+        dbg!(replication_id, offset);
         Ok(())
     }
 
@@ -78,7 +80,11 @@ impl Follower {
         writer.write_all(&conf_array.to_bytes()?).await?;
 
         let response_string = response_as_simple_string(reader).await?;
-        ensure!(response_string == "OK", "Unexpected response from master");
+        ensure!(
+            response_string == "OK",
+            "conf-capa Unexpected response from master. Expected 'OK', got '{}'",
+            response_string
+        );
         Ok(())
     }
 
@@ -101,7 +107,13 @@ impl Follower {
         writer.write_all(&conf_array.to_bytes()?).await?;
 
         let response_string = response_as_simple_string(reader).await?;
-        ensure!(response_string == "OK", "Unexpected response from master");
+        ensure!(
+            response_string == "OK",
+            format!(
+                "repl-conf-listening - Unexpected response from master. Expected 'OK', got '{}'",
+                response_string
+            )
+        );
         Ok(())
     }
 
@@ -119,7 +131,13 @@ impl Follower {
         writer.write_all(&ping_array.to_bytes()?).await?;
 
         let response_string = response_as_simple_string(reader).await?;
-        ensure!(response_string == "PONG", "Unexpected response from master");
+        ensure!(
+            response_string == "PONG",
+            format!(
+                "ping - Unexpected response from master expected PONG, got: {}",
+                response_string
+            )
+        );
         Ok(())
     }
 }
@@ -145,6 +163,36 @@ fn simple_string_from_response(response: Option<Box<dyn RedisDataType>>) -> Resu
         .ok_or_else(|| anyhow::anyhow!("Unexpected response type"))?;
 
     Ok(simple_string.value.clone())
+}
+
+fn psync_response_to_replication_id_and_offset(response: &str) -> Result<(String, u64)> {
+    let mut parts = response.split(' ');
+    let action = parts
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("psync - expected FULLRESYNC"))?;
+    ensure!(
+        action == "FULLRESYNC",
+        "psync - expected FULLRESYNC, got {}",
+        action
+    );
+    let replication_id = parts
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("psync - expected replication ID"))?;
+    ensure!(
+        replication_id.len() == 40,
+        format!(
+            "psync - expected replication ID of length 40, got: {}",
+            replication_id
+        )
+    );
+    let offset = parts
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("psync - expected offset"))?;
+    let offset = offset
+        .parse::<u64>()
+        .map_err(|_| anyhow::anyhow!("Invalid offset"))?;
+
+    Ok((replication_id.to_string(), offset))
 }
 
 #[cfg(test)]
@@ -178,6 +226,106 @@ mod tests {
         let mut reader = std::io::Cursor::new(b"-ERR\r\n");
         let mut writer = tokio::io::sink();
         let result = follower.ping_leader(&mut reader, &mut writer).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_psync_success() {
+        let app_context = AppContext::default();
+        let follower = Follower::new(app_context);
+        let response = b"+FULLRESYNC 8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb 0\r\n";
+        let mut reader = std::io::Cursor::new(response.as_slice());
+        let mut writer = tokio::io::sink();
+        let result = follower.psync(&mut reader, &mut writer).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_psync_empty_response() {
+        let app_context = AppContext::default();
+        let follower = Follower::new(app_context);
+        let mut reader = tokio::io::empty();
+        let mut writer = tokio::io::sink();
+        let result = follower.psync(&mut reader, &mut writer).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_psync_invalid_response() {
+        let app_context = AppContext::default();
+        let follower = Follower::new(app_context);
+        let mut reader = std::io::Cursor::new(b"+INVALID\r\n");
+        let mut writer = tokio::io::sink();
+        let result = follower.psync(&mut reader, &mut writer).await;
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_psync_response_to_replication_id_and_offset_success() {
+        let response = "FULLRESYNC 8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb 0";
+        let result = psync_response_to_replication_id_and_offset(response);
+        assert!(result.is_ok());
+        let (replication_id, offset) = result.unwrap();
+        assert_eq!(replication_id, "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb");
+        assert_eq!(offset, 0);
+    }
+
+    #[test]
+    fn test_psync_response_to_replication_id_and_offset_with_nonzero_offset() {
+        let response = "FULLRESYNC 8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb 12345";
+        let result = psync_response_to_replication_id_and_offset(response);
+        assert!(result.is_ok());
+        let (replication_id, offset) = result.unwrap();
+        assert_eq!(replication_id, "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb");
+        assert_eq!(offset, 12345);
+    }
+
+    #[test]
+    fn test_psync_response_missing_action() {
+        let response = "";
+        let result = psync_response_to_replication_id_and_offset(response);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_psync_response_wrong_action() {
+        let response = "WRONGACTION 8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb 0";
+        let result = psync_response_to_replication_id_and_offset(response);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_psync_response_missing_replication_id() {
+        let response = "FULLRESYNC";
+        let result = psync_response_to_replication_id_and_offset(response);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_psync_response_invalid_replication_id_length() {
+        let response = "FULLRESYNC tooshort 0";
+        let result = psync_response_to_replication_id_and_offset(response);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_psync_response_missing_offset() {
+        let response = "FULLRESYNC 8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb";
+        let result = psync_response_to_replication_id_and_offset(response);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_psync_response_invalid_offset() {
+        let response = "FULLRESYNC 8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb notanumber";
+        let result = psync_response_to_replication_id_and_offset(response);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_psync_response_negative_offset() {
+        let response = "FULLRESYNC 8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb -1";
+        let result = psync_response_to_replication_id_and_offset(response);
         assert!(result.is_err());
     }
 }
