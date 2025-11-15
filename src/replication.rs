@@ -12,6 +12,16 @@ impl Default for ReplicationRole {
     }
 }
 
+impl ReplicationRole {
+    pub fn is_follower(&self) -> bool {
+        matches!(self, ReplicationRole::Follower(_))
+    }
+
+    pub fn is_leader(&self) -> bool {
+        matches!(self, ReplicationRole::Leader(_))
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct LeaderReplication {
     pub replication_id: String,

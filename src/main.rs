@@ -7,6 +7,7 @@ use codecrafters_redis::cli::Args;
 use codecrafters_redis::config::Config;
 use codecrafters_redis::connection::handle_connection;
 use codecrafters_redis::context::AppContext;
+use codecrafters_redis::follower::Follower;
 use codecrafters_redis::rdb::parse_rdb_file;
 use codecrafters_redis::replication::{FollowerReplication, LeaderReplication, ReplicationRole};
 use codecrafters_redis::store::Store;
@@ -26,9 +27,9 @@ async fn main() -> Result<()> {
         &app_context.config.server_bind_address()
     );
 
-    if let ReplicationRole::Follower(follower_replication) = app_context.replication_role.as_ref() {
-        dbg!(follower_replication);
-        //follower_replication.start().await?;
+    if app_context.is_follower() {
+        let follower = Follower::new(app_context.clone());
+        follower.start().await?;
     }
 
     // Accept connections in a loop

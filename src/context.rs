@@ -29,6 +29,14 @@ impl AppContext {
             replication_role,
         }
     }
+
+    pub fn is_follower(&self) -> bool {
+        self.replication_role.is_follower()
+    }
+
+    pub fn is_leader(&self) -> bool {
+        self.replication_role.is_leader()
+    }
 }
 
 impl Default for AppContext {
