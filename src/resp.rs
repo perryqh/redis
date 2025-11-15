@@ -4,7 +4,7 @@ use anyhow::Result;
 
 use crate::commands::{
     ConfigCommand, EchoCommand, GetCommand, InfoCommand, KeysCommand, PingCommand, RedisCommand,
-    RpopCommand, RpushCommand, SetCommand,
+    ReplConfCommand, RpopCommand, RpushCommand, SetCommand,
 };
 use crate::datatypes::{Array, BulkString, Integer, RedisDataType, SimpleError, SimpleString};
 
@@ -69,6 +69,10 @@ pub fn parse_command(cursor: &mut Cursor<&[u8]>) -> Result<Option<Box<dyn RedisC
                         "INFO" if !array.values.is_empty() => {
                             let info_command = InfoCommand::new(&array.values[1..])?;
                             return Ok(Some(Box::new(info_command)));
+                        }
+                        "REPLCONF" if !array.values.is_empty() => {
+                            let replconf_command = ReplConfCommand {};
+                            return Ok(Some(Box::new(replconf_command)));
                         }
                         _ => {}
                     }
@@ -1064,6 +1068,72 @@ mod tests {
     #[test]
     fn test_parse_command_keys_insufficient_args() -> Result<()> {
         let input = b"*1\r\n$4\r\nKEYS\r\n";
+        let mut cursor = Cursor::new(&input[..]);
+        let result = parse_command(&mut cursor)?;
+
+        assert!(result.is_none());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_command_replconf_listening_port() -> Result<()> {
+        let input = b"*3\r\n$8\r\nREPLCONF\r\n$14\r\nlistening-port\r\n$4\r\n6379\r\n";
+        let mut cursor = Cursor::new(&input[..]);
+        let result = parse_command(&mut cursor)?;
+
+        assert!(result.is_some());
+        let command = result.unwrap();
+        let response = command.execute(&AppContext::default())?;
+        assert_eq!(response, b"+OK\r\n");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_command_replconf_capa() -> Result<()> {
+        let input = b"*3\r\n$8\r\nREPLCONF\r\n$4\r\ncapa\r\n$6\r\npsync2\r\n";
+        let mut cursor = Cursor::new(&input[..]);
+        let result = parse_command(&mut cursor)?;
+
+        assert!(result.is_some());
+        let command = result.unwrap();
+        let response = command.execute(&AppContext::default())?;
+        assert_eq!(response, b"+OK\r\n");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_command_replconf_case_insensitive() -> Result<()> {
+        let input = b"*3\r\n$8\r\nreplconf\r\n$4\r\ncapa\r\n$6\r\npsync2\r\n";
+        let mut cursor = Cursor::new(&input[..]);
+        let result = parse_command(&mut cursor)?;
+
+        assert!(result.is_some());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_command_replconf_no_args() -> Result<()> {
+        // REPLCONF with just the command name is valid in current implementation
+        let input = b"*1\r\n$8\r\nREPLCONF\r\n";
+        let mut cursor = Cursor::new(&input[..]);
+        let result = parse_command(&mut cursor)?;
+
+        assert!(result.is_some());
+        let command = result.unwrap();
+        let response = command.execute(&AppContext::default())?;
+        assert_eq!(response, b"+OK\r\n");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_command_replconf_insufficient_args() -> Result<()> {
+        // Empty array should return None
+        let input = b"*0\r\n";
         let mut cursor = Cursor::new(&input[..]);
         let result = parse_command(&mut cursor)?;
 

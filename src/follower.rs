@@ -328,4 +328,84 @@ mod tests {
         let result = psync_response_to_replication_id_and_offset(response);
         assert!(result.is_err());
     }
+
+    #[tokio::test]
+    async fn test_repl_conf_listening_success() {
+        let app_context = AppContext::default();
+        let follower = Follower::new(app_context);
+        let mut reader = std::io::Cursor::new(b"+OK\r\n");
+        let mut writer = tokio::io::sink();
+        let result = follower.repl_conf_listening(&mut reader, &mut writer).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_repl_conf_listening_empty_response() {
+        let app_context = AppContext::default();
+        let follower = Follower::new(app_context);
+        let mut reader = tokio::io::empty();
+        let mut writer = tokio::io::sink();
+        let result = follower.repl_conf_listening(&mut reader, &mut writer).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_repl_conf_listening_invalid_response() {
+        let app_context = AppContext::default();
+        let follower = Follower::new(app_context);
+        let mut reader = std::io::Cursor::new(b"+ERROR\r\n");
+        let mut writer = tokio::io::sink();
+        let result = follower.repl_conf_listening(&mut reader, &mut writer).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_repl_conf_listening_error_response() {
+        let app_context = AppContext::default();
+        let follower = Follower::new(app_context);
+        let mut reader = std::io::Cursor::new(b"-ERR unknown command\r\n");
+        let mut writer = tokio::io::sink();
+        let result = follower.repl_conf_listening(&mut reader, &mut writer).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_repl_conf_capa_success() {
+        let app_context = AppContext::default();
+        let follower = Follower::new(app_context);
+        let mut reader = std::io::Cursor::new(b"+OK\r\n");
+        let mut writer = tokio::io::sink();
+        let result = follower.repl_conf_capa(&mut reader, &mut writer).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_repl_conf_capa_empty_response() {
+        let app_context = AppContext::default();
+        let follower = Follower::new(app_context);
+        let mut reader = tokio::io::empty();
+        let mut writer = tokio::io::sink();
+        let result = follower.repl_conf_capa(&mut reader, &mut writer).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_repl_conf_capa_invalid_response() {
+        let app_context = AppContext::default();
+        let follower = Follower::new(app_context);
+        let mut reader = std::io::Cursor::new(b"+NOTOK\r\n");
+        let mut writer = tokio::io::sink();
+        let result = follower.repl_conf_capa(&mut reader, &mut writer).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_repl_conf_capa_error_response() {
+        let app_context = AppContext::default();
+        let follower = Follower::new(app_context);
+        let mut reader = std::io::Cursor::new(b"-ERR invalid capability\r\n");
+        let mut writer = tokio::io::sink();
+        let result = follower.repl_conf_capa(&mut reader, &mut writer).await;
+        assert!(result.is_err());
+    }
 }

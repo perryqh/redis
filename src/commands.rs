@@ -309,6 +309,13 @@ impl RedisCommand for InfoCommand {
     }
 }
 
+pub struct ReplConfCommand {}
+impl RedisCommand for ReplConfCommand {
+    fn execute(&self, _app_context: &AppContext) -> Result<Vec<u8>> {
+        SimpleString::new("OK".to_string()).to_bytes()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::datatypes::{BulkString, Integer, SimpleString};
