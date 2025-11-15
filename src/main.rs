@@ -8,16 +8,16 @@ use codecrafters_redis::config::Config;
 use codecrafters_redis::connection::handle_connection;
 use codecrafters_redis::context::AppContext;
 use codecrafters_redis::rdb::parse_rdb_file;
-use codecrafters_redis::replication::{MasterReplication, Role};
+use codecrafters_redis::replication::{MasterReplication, Role, SlaveReplication};
 use codecrafters_redis::store::Store;
 use tokio::net::TcpListener;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    let config = Config::new(args)?;
+    let config = Config::new(&args)?;
     let store = build_store(&config).await?;
-    let replication_role = build_replication(&config).await?;
+    let replication_role = build_replication(&config, &args).await?;
     let app_context = AppContext::from_arc(store, Arc::new(config), replication_role);
 
     let listener = TcpListener::bind(&app_context.config.server_bind_address()).await?;
@@ -53,8 +53,11 @@ async fn main() -> Result<()> {
         Ok(Arc::new(Store::new()))
     }
 
-    async fn build_replication(_config: &Config) -> Result<Arc<Role>> {
-        Ok(Arc::new(Role::Master(MasterReplication::default())))
+    async fn build_replication(_config: &Config, args: &Args) -> Result<Arc<Role>> {
+        match args.replicaof_host_port()? {
+            Some((host, port)) => Ok(Arc::new(Role::Slave(SlaveReplication::new(host, port)))),
+            None => Ok(Arc::new(Role::Master(MasterReplication::default()))),
+        }
     }
 }
 
@@ -126,7 +129,7 @@ mod tests {
             replicaof: None,
         };
 
-        let config = Config::new(args).unwrap();
+        let config = Config::new(&args).unwrap();
         assert_eq!(config.dir, "/custom/dir");
         assert_eq!(config.dbfilename, "custom.rdb");
         assert_eq!(config.server_port, 6380);

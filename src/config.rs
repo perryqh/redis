@@ -10,10 +10,10 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn new(args: Args) -> Result<Self> {
+    pub fn new(args: &Args) -> Result<Self> {
         Ok(Config {
-            dir: args.dir,
-            dbfilename: args.dbfilename,
+            dir: args.dir.clone(),
+            dbfilename: args.dbfilename.clone(),
             server_port: args.port,
             ..Default::default()
         })
@@ -52,7 +52,7 @@ mod tests {
             replicaof: None,
         };
 
-        let config = Config::new(args).unwrap();
+        let config = Config::new(&args).unwrap();
 
         assert_eq!(config.dir, "/tmp");
         assert_eq!(config.dbfilename, "test.rdb");
