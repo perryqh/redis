@@ -3,8 +3,8 @@ use std::io::{Cursor, Read};
 use anyhow::Result;
 
 use crate::commands::{
-    ConfigCommand, EchoCommand, GetCommand, InfoCommand, KeysCommand, PingCommand, RedisCommand,
-    ReplConfCommand, RpopCommand, RpushCommand, SetCommand,
+    ConfigCommand, EchoCommand, GetCommand, InfoCommand, KeysCommand, PingCommand, PsyncCommand,
+    RedisCommand, ReplConfCommand, RpopCommand, RpushCommand, SetCommand,
 };
 use crate::datatypes::{Array, BulkString, Integer, RedisDataType, SimpleError, SimpleString};
 
@@ -74,7 +74,14 @@ pub fn parse_command(cursor: &mut Cursor<&[u8]>) -> Result<Option<Box<dyn RedisC
                             let replconf_command = ReplConfCommand {};
                             return Ok(Some(Box::new(replconf_command)));
                         }
-                        _ => {}
+                        "PSYNC" if array.values.len() >= 3 => {
+                            let psync_command = PsyncCommand::new(&array.values[1..])?;
+                            return Ok(Some(Box::new(psync_command)));
+                        }
+
+                        _ => {
+                            dbg!("Unknown command");
+                        }
                     }
                 }
             }
@@ -1134,6 +1141,52 @@ mod tests {
     fn test_parse_command_replconf_insufficient_args() -> Result<()> {
         // Empty array should return None
         let input = b"*0\r\n";
+        let mut cursor = Cursor::new(&input[..]);
+        let result = parse_command(&mut cursor)?;
+
+        assert!(result.is_none());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_command_psync_success() -> Result<()> {
+        let input = b"*3\r\n$5\r\nPSYNC\r\n$1\r\n?\r\n$2\r\n-1\r\n";
+        let mut cursor = Cursor::new(&input[..]);
+        let result = parse_command(&mut cursor)?;
+
+        assert!(result.is_some());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_command_psync_case_insensitive() -> Result<()> {
+        let input = b"*3\r\n$5\r\npsync\r\n$1\r\n?\r\n$2\r\n-1\r\n";
+        let mut cursor = Cursor::new(&input[..]);
+        let result = parse_command(&mut cursor)?;
+
+        assert!(result.is_some());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_command_psync_insufficient_args() -> Result<()> {
+        // PSYNC with only the command name should return None
+        let input = b"*1\r\n$5\r\nPSYNC\r\n";
+        let mut cursor = Cursor::new(&input[..]);
+        let result = parse_command(&mut cursor)?;
+
+        assert!(result.is_none());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_command_psync_missing_offset() -> Result<()> {
+        // PSYNC with only replication_id but no offset should return None
+        let input = b"*2\r\n$5\r\nPSYNC\r\n$1\r\n?\r\n";
         let mut cursor = Cursor::new(&input[..]);
         let result = parse_command(&mut cursor)?;
 

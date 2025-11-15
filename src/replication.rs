@@ -36,7 +36,8 @@ pub struct FollowerReplication {
 
 impl Default for LeaderReplication {
     fn default() -> Self {
-        let replication_id: String = format!("{}-{}", Uuid::new_v4(), Uuid::new_v4())
+        let replication_id: String = format!("{}{}", Uuid::new_v4(), Uuid::new_v4())
+            .replace("-", "")
             .chars()
             .take(40)
             .collect();

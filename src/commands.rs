@@ -2,7 +2,9 @@ use std::time::Duration;
 
 use crate::{
     context::AppContext,
-    datatypes::{Array, BulkString, Integer, NullBulkString, RedisDataType, SimpleString},
+    datatypes::{
+        Array, BulkString, Integer, NullBulkString, RedisDataType, SimpleError, SimpleString,
+    },
     replication::ReplicationRole,
 };
 use anyhow::{bail, Context, Result};
@@ -313,6 +315,41 @@ pub struct ReplConfCommand {}
 impl RedisCommand for ReplConfCommand {
     fn execute(&self, _app_context: &AppContext) -> Result<Vec<u8>> {
         SimpleString::new("OK".to_string()).to_bytes()
+    }
+}
+
+pub struct PsyncCommand {
+    // I believe that the follower sends this as a sanity check. It should be
+    // "this" replication ID
+    pub replication_id: String,
+    pub replication_offset: i64,
+}
+
+impl PsyncCommand {
+    pub fn new(input_array: &[Box<dyn RedisDataType>]) -> Result<Self> {
+        let replication_id = extract_bulk_string(input_array, 0, "replication_id")?;
+        let offset = extract_bulk_string(input_array, 1, "offset")?;
+        Ok(Self {
+            replication_id,
+            replication_offset: offset.parse()?,
+        })
+    }
+}
+
+impl RedisCommand for PsyncCommand {
+    fn execute(&self, app_context: &AppContext) -> Result<Vec<u8>> {
+        if let ReplicationRole::Leader(leader_replication) = app_context.replication_role.as_ref() {
+            let response_text = format!(
+                "FULLRESYNC {} {}",
+                leader_replication.replication_id, leader_replication.replication_offset
+            );
+            dbg!("response_text: {}", &response_text);
+            SimpleString::new(response_text).to_bytes()
+        } else {
+            dbg!("PSYNC not supported in follower mode");
+            let error = SimpleError::new("PSYNC not supported in follower mode".to_string());
+            error.to_bytes()
+        }
     }
 }
 

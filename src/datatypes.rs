@@ -24,6 +24,12 @@ pub struct SimpleError {
     pub value: String,
 }
 
+impl SimpleError {
+    pub fn new(value: String) -> Self {
+        Self { value }
+    }
+}
+
 impl RedisDataType for SimpleError {
     fn to_bytes(&self) -> Result<Vec<u8>> {
         Ok(format!("-{}\r\n", self.value).into_bytes())
