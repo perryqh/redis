@@ -47,10 +47,11 @@ impl Follower {
         R: AsyncRead + Unpin,
         W: AsyncWrite + Unpin,
     {
+        dbg!("in listen......loop");
         // sleep for a bit to let handshaking complete
         tokio::time::sleep(Duration::from_millis(100)).await;
         let mut buf = [0; 1024];
-        let mut offset = 0;
+        let mut offset: usize = 0;
         loop {
             let n = reader.read(&mut buf).await?;
             if n == 0 {
@@ -61,19 +62,22 @@ impl Follower {
             // Parse and execute commands from the buffer
             let mut cursor = Cursor::new(&buf[..n]);
             loop {
+                let position_before = cursor.position() as usize;
                 let command = parse_command(&mut cursor)?;
+
                 match command {
                     Some(command) => {
+                        let position_after = cursor.position() as usize;
+                        let bytes_consumed = position_after - position_before;
+
                         dbg!(command.command_name());
                         if let Some(CommandAction::Response(response)) = command
                             .execute_leader_command_from_replica(&self.app_context, offset)?
                         {
                             writer.write_all(&response).await?;
                             writer.flush().await?;
-                        } else {
-                            offset += n;
-                            dbg!("not a commandaction::response!!!!!!");
                         }
+                        offset += bytes_consumed;
                     }
                     None => {
                         // No more commands in the buffer, exit the loop
@@ -102,10 +106,12 @@ impl Follower {
         ]);
         writer.write_all(&conf_array.to_bytes()?).await?;
 
-        let response_string = response_as_simple_string(reader).await?;
+        let response_string = read_simple_string_line(reader).await?;
         let (replication_id, offset) =
             psync_response_to_replication_id_and_offset(&response_string)?;
-        dbg!(replication_id, offset);
+        dbg!("psync", replication_id, offset);
+
+        read_rdb_file(reader).await?;
         Ok(())
     }
 
@@ -124,7 +130,7 @@ impl Follower {
             Box::new(BulkString::new("psync2".to_string())),
         ]);
         writer.write_all(&conf_array.to_bytes()?).await?;
-
+        dbg!("capa psync2");
         let response_string = response_as_simple_string(reader).await?;
         ensure!(
             response_string == "OK",
@@ -151,7 +157,7 @@ impl Follower {
             )),
         ]);
         writer.write_all(&conf_array.to_bytes()?).await?;
-
+        dbg!("repl config listening");
         let response_string = response_as_simple_string(reader).await?;
         ensure!(
             response_string == "OK",
@@ -186,6 +192,68 @@ impl Follower {
         );
         Ok(())
     }
+}
+
+async fn read_rdb_file<Reader>(reader: &mut Reader) -> Result<()>
+where
+    Reader: AsyncReadExt + Unpin,
+{
+    // $<length_of_file>\r\n<binary_contents_of_file>
+
+    // Read the '$' prefix
+    let mut prefix = [0u8; 1];
+    reader.read_exact(&mut prefix).await?;
+    ensure!(prefix[0] == b'$', "Expected '$' prefix for RDB file");
+
+    // Read the length until \r\n
+    let mut length_bytes = Vec::new();
+    loop {
+        let mut byte = [0u8; 1];
+        reader.read_exact(&mut byte).await?;
+        if byte[0] == b'\r' {
+            let mut next_byte = [0u8; 1];
+            reader.read_exact(&mut next_byte).await?;
+            ensure!(next_byte[0] == b'\n', "Expected '\\n' after '\\r'");
+            break;
+        }
+        length_bytes.push(byte[0]);
+    }
+
+    // Parse the length
+    let length_str = String::from_utf8(length_bytes)?;
+    let length: usize = length_str.parse()?;
+
+    // Read and discard the RDB file contents
+    let mut rdb_data = vec![0u8; length];
+    reader.read_exact(&mut rdb_data).await?;
+
+    Ok(())
+}
+
+async fn read_simple_string_line<Reader>(reader: &mut Reader) -> Result<String>
+where
+    Reader: AsyncReadExt + Unpin,
+{
+    // Read '+' prefix
+    let mut prefix = [0u8; 1];
+    reader.read_exact(&mut prefix).await?;
+    ensure!(prefix[0] == b'+', "Expected '+' prefix for simple string");
+
+    // Read until \r\n
+    let mut line_bytes = Vec::new();
+    loop {
+        let mut byte = [0u8; 1];
+        reader.read_exact(&mut byte).await?;
+        if byte[0] == b'\r' {
+            let mut next_byte = [0u8; 1];
+            reader.read_exact(&mut next_byte).await?;
+            ensure!(next_byte[0] == b'\n', "Expected '\\n' after '\\r'");
+            break;
+        }
+        line_bytes.push(byte[0]);
+    }
+
+    Ok(String::from_utf8(line_bytes)?)
 }
 
 async fn response_as_simple_string<Reader>(reader: &mut Reader) -> Result<String>
@@ -243,6 +311,10 @@ fn psync_response_to_replication_id_and_offset(response: &str) -> Result<(String
 
 #[cfg(test)]
 mod tests {
+    use base64::{engine::general_purpose::STANDARD, Engine};
+
+    use crate::rdb::EMPTY_RDB;
+
     use super::*;
 
     #[tokio::test]
@@ -279,8 +351,17 @@ mod tests {
     async fn test_psync_success() {
         let app_context = AppContext::default();
         let follower = Follower::new(app_context);
-        let response = b"+FULLRESYNC 8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb 0\r\n";
-        let mut reader = std::io::Cursor::new(response.as_slice());
+
+        // Prepare FULLRESYNC response with RDB file data
+        let mut response = b"+FULLRESYNC 8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb 0\r\n".to_vec();
+
+        // Add RDB file in bulk string format
+        let rdb_data = STANDARD.decode(EMPTY_RDB).unwrap();
+        let rdb_bulk_string = format!("${}\r\n", rdb_data.len()).into_bytes();
+        response.extend_from_slice(&rdb_bulk_string);
+        response.extend_from_slice(&rdb_data);
+
+        let mut reader = std::io::Cursor::new(response);
         let mut writer = tokio::io::sink();
         let result = follower.psync(&mut reader, &mut writer).await;
         assert!(result.is_ok());
@@ -510,22 +591,20 @@ mod tests {
         let follower = Follower::new(app_context.clone());
 
         // Send SET and GETACK in the same buffer
-        // NOTE: Current implementation increments offset by full buffer size (n) for each non-GETACK command
-        // When both commands are in one read(), n = total size, so offset after SET = total_size
         let set_array = Array::from_strs(vec!["SET", "key", "value"]);
         let getack_array = Array::from_strs(vec!["REPLCONF", "GETACK", "*"]);
         let mut bytes = set_array.to_bytes()?;
+        let set_size = bytes.len();
         bytes.extend_from_slice(&getack_array.to_bytes()?);
-        let total_size = bytes.len();
 
         let mut reader = std::io::Cursor::new(bytes);
         let mut writer = Vec::new();
         let result = follower.listen(&mut reader, &mut writer).await;
         assert!(result.is_ok());
 
-        // With current implementation, offset = total_size (including GETACK bytes)
+        // Offset should only include the SET command bytes, not the GETACK
         let expected =
-            Array::from_strs(vec!["REPLCONF", "ACK", &total_size.to_string()]).to_bytes()?;
+            Array::from_strs(vec!["REPLCONF", "ACK", &set_size.to_string()]).to_bytes()?;
         assert_eq!(writer, expected);
 
         // Verify SET was executed
@@ -540,25 +619,23 @@ mod tests {
         let follower = Follower::new(app_context.clone());
 
         // Send multiple SET commands, then REPLCONF GETACK
-        // NOTE: When all commands are in one buffer, each non-GETACK command adds n (total buffer size) to offset
         let set1 = Array::from_strs(vec!["SET", "key1", "value1"]);
         let set2 = Array::from_strs(vec!["SET", "key2", "value2"]);
         let getack = Array::from_strs(vec!["REPLCONF", "GETACK", "*"]);
 
         let mut bytes = set1.to_bytes()?;
         bytes.extend_from_slice(&set2.to_bytes()?);
-        bytes.extend_from_slice(&getack.to_bytes()?);
         let total_size = bytes.len();
+        bytes.extend_from_slice(&getack.to_bytes()?);
 
         let mut reader = std::io::Cursor::new(bytes);
         let mut writer = Vec::new();
         let result = follower.listen(&mut reader, &mut writer).await;
         assert!(result.is_ok());
 
-        // Current implementation: 2 SET commands × total_size = 2 * total_size
-        let expected_offset = total_size * 2;
+        // Offset should only include the SET commands bytes, not the GETACK
         let expected =
-            Array::from_strs(vec!["REPLCONF", "ACK", &expected_offset.to_string()]).to_bytes()?;
+            Array::from_strs(vec!["REPLCONF", "ACK", &total_size.to_string()]).to_bytes()?;
         assert_eq!(writer, expected);
 
         // Verify both SETs were executed
@@ -615,6 +692,17 @@ mod tests {
             .expect("Response should be an Array");
         assert_eq!(array.values.len(), 3);
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_read_rdb_file() -> Result<()> {
+        let data = STANDARD.decode(EMPTY_RDB).unwrap();
+        let mut rdb_data = format!("${}\r\n", data.len()).into_bytes();
+        rdb_data.extend_from_slice(&data);
+        let mut reader = std::io::Cursor::new(rdb_data);
+        let result = read_rdb_file(&mut reader).await;
+        assert!(result.is_ok());
         Ok(())
     }
 }

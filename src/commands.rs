@@ -420,8 +420,10 @@ impl RedisCommand for ReplConfCommand {
         _app_context: &AppContext,
         offset: usize,
     ) -> Result<Option<CommandAction>> {
+        dbg!("in execute_leader_command_from_replica");
         if let Some(action) = &self.action {
             if action == "GETACK" {
+                dbg!(offset);
                 let response =
                     Array::from_strs(vec!["REPLCONF", "ACK", format!("{}", offset).as_str()]);
                 return Ok(Some(CommandAction::Response(response.to_bytes()?)));
