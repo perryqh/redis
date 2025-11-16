@@ -1,14 +1,15 @@
 use std::io::Cursor;
 
 use crate::{
+    commands::CommandAction,
     context::AppContext,
     datatypes::{Array, BulkString, RedisDataType, SimpleString},
     replication::ReplicationRole,
-    resp::parse_data_type,
+    resp::{parse_command, parse_data_type},
 };
 use anyhow::{bail, ensure, Result};
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
+    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     net::TcpStream,
 };
 
@@ -37,7 +38,32 @@ impl Follower {
         self.ping_leader(&mut reader, &mut writer).await?;
         self.repl_conf_listening(&mut reader, &mut writer).await?;
         self.repl_conf_capa(&mut reader, &mut writer).await?;
-        self.psync(&mut reader, &mut writer).await
+        self.psync(&mut reader, &mut writer).await?;
+        self.listen(&mut reader, &mut writer).await
+    }
+
+    async fn listen<R, W>(&self, reader: &mut R, _writer: &mut W) -> Result<()>
+    where
+        R: AsyncRead + Unpin,
+        W: AsyncWrite + Unpin,
+    {
+        let mut buf = [0; 1024];
+        loop {
+            let n = reader.read(&mut buf).await?;
+            if n == 0 {
+                // No more data, exit cleanly
+                break;
+            }
+
+            // Parse and execute commands from the buffer
+            let mut cursor = Cursor::new(&buf[..n]);
+            while let Ok(Some(command)) = parse_command(&mut cursor) {
+                if let CommandAction::Response(_response) = command.execute(&self.app_context)? {
+                    // do nothing
+                }
+            }
+        }
+        Ok(())
     }
 
     async fn psync<Reader, Writer>(
@@ -407,5 +433,38 @@ mod tests {
         let mut writer = tokio::io::sink();
         let result = follower.repl_conf_capa(&mut reader, &mut writer).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_listen_set() -> Result<()> {
+        let app_context = AppContext::default();
+        let follower = Follower::new(app_context.clone());
+        let array = Array::from_strs(vec!["SET", "key", "value"]);
+        let mut reader = std::io::Cursor::new(array.to_bytes()?);
+        let mut writer = tokio::io::sink();
+        let result = follower.listen(&mut reader, &mut writer).await;
+        assert!(result.is_ok());
+        let value = app_context.store.get_string("key");
+        assert_eq!(value, Some("value".to_string()));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_listen_set_multiple_commands() -> Result<()> {
+        let app_context = AppContext::default();
+        let follower = Follower::new(app_context.clone());
+        let array = Array::from_strs(vec!["SET", "baz", "bop"]);
+        let another_array = Array::from_strs(vec!["SET", "foo", "bar"]);
+        let mut bytes = array.to_bytes()?;
+        bytes.extend_from_slice(&another_array.to_bytes()?);
+        let mut reader = std::io::Cursor::new(bytes);
+        let mut writer = tokio::io::sink();
+        let result = follower.listen(&mut reader, &mut writer).await;
+        assert!(result.is_ok());
+        let value = app_context.store.get_string("baz");
+        assert_eq!(value, Some("bop".to_string()));
+        let value = app_context.store.get_string("foo");
+        assert_eq!(value, Some("bar".to_string()));
+        Ok(())
     }
 }

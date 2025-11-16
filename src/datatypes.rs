@@ -51,6 +51,14 @@ impl Array {
     pub fn new(values: Vec<Box<dyn RedisDataType>>) -> Self {
         Array { values }
     }
+    pub fn from_strs(values: Vec<&str>) -> Self {
+        Array {
+            values: values
+                .into_iter()
+                .map(|s| Box::new(BulkString::new(s.into())) as Box<dyn RedisDataType>)
+                .collect(),
+        }
+    }
 }
 
 // *-1\r\n
