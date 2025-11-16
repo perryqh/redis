@@ -30,7 +30,13 @@ async fn main() -> Result<()> {
 
     if app_context.is_follower() {
         let follower = Follower::new(app_context.clone());
-        follower.start().await?;
+        // Spawn follower in background to listen for replication updates
+        // while still accepting client connections in the main loop
+        tokio::spawn(async move {
+            if let Err(e) = follower.start().await {
+                eprintln!("Follower replication error: {}", e);
+            }
+        });
     }
 
     // Accept connections in a loop

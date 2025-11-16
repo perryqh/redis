@@ -39,6 +39,7 @@ fn extract_bulk_string(
 
 pub trait RedisCommand: Send {
     fn execute(&self, app_context: &AppContext) -> Result<CommandAction>;
+    fn command_name(&self) -> &'static str;
 }
 
 pub struct PingCommand {}
@@ -46,6 +47,10 @@ impl RedisCommand for PingCommand {
     fn execute(&self, _app_context: &AppContext) -> Result<CommandAction> {
         let response = SimpleString::new("PONG".to_string()).to_bytes()?;
         Ok(CommandAction::Response(response))
+    }
+
+    fn command_name(&self) -> &'static str {
+        "PING"
     }
 }
 
@@ -64,6 +69,10 @@ impl RedisCommand for EchoCommand {
     fn execute(&self, _app_context: &AppContext) -> Result<CommandAction> {
         let response = BulkString::new(self.message.clone()).to_bytes()?;
         Ok(CommandAction::Response(response))
+    }
+
+    fn command_name(&self) -> &'static str {
+        "ECHO"
     }
 }
 
@@ -88,6 +97,10 @@ impl RpushCommand {
 }
 
 impl RedisCommand for RpushCommand {
+    fn command_name(&self) -> &'static str {
+        "RPUSH"
+    }
+
     fn execute(&self, app_context: &AppContext) -> Result<CommandAction> {
         let mut len = 0;
         for value in &self.values {
@@ -110,6 +123,10 @@ impl RpopCommand {
 }
 
 impl RedisCommand for RpopCommand {
+    fn command_name(&self) -> &'static str {
+        "RPOP"
+    }
+
     fn execute(&self, app_context: &AppContext) -> Result<CommandAction> {
         let response = match app_context.store.rpop(&self.key) {
             Some(value) => BulkString::new(value).to_bytes()?,
@@ -175,6 +192,10 @@ impl SetCommand {
 }
 
 impl RedisCommand for SetCommand {
+    fn command_name(&self) -> &'static str {
+        "SET"
+    }
+
     fn execute(&self, app_context: &AppContext) -> Result<CommandAction> {
         if let Some(ttl) = self.ttl {
             app_context
@@ -222,6 +243,10 @@ impl GetCommand {
 }
 
 impl RedisCommand for GetCommand {
+    fn command_name(&self) -> &'static str {
+        "GET"
+    }
+
     fn execute(&self, app_context: &AppContext) -> Result<CommandAction> {
         let response = match app_context.store.get_string(&self.key) {
             Some(value) => BulkString::new(value).to_bytes()?,
@@ -256,6 +281,10 @@ impl ConfigCommand {
 }
 
 impl RedisCommand for ConfigCommand {
+    fn command_name(&self) -> &'static str {
+        "CONFIG"
+    }
+
     fn execute(&self, app_context: &AppContext) -> Result<CommandAction> {
         let response = match self.action {
             ConfigAction::Get(ref keys) => {
@@ -294,6 +323,10 @@ impl KeysCommand {
 }
 
 impl RedisCommand for KeysCommand {
+    fn command_name(&self) -> &'static str {
+        "KEYS"
+    }
+
     fn execute(&self, app_context: &AppContext) -> Result<CommandAction> {
         let keys: Vec<String> = app_context.store.keys(&self.pattern)?;
         let bulk_strings = keys
@@ -324,6 +357,10 @@ impl InfoCommand {
 }
 
 impl RedisCommand for InfoCommand {
+    fn command_name(&self) -> &'static str {
+        "INFO"
+    }
+
     fn execute(&self, app_context: &AppContext) -> Result<CommandAction> {
         let mut info = String::new();
 
@@ -357,6 +394,10 @@ impl RedisCommand for ReplConfCommand {
         let response = SimpleString::new("OK".to_string()).to_bytes()?;
         Ok(CommandAction::Response(response))
     }
+
+    fn command_name(&self) -> &'static str {
+        "REPLCONF"
+    }
 }
 
 pub struct PsyncCommand {
@@ -378,6 +419,10 @@ impl PsyncCommand {
 }
 
 impl RedisCommand for PsyncCommand {
+    fn command_name(&self) -> &'static str {
+        "PSYNC"
+    }
+
     fn execute(&self, app_context: &AppContext) -> Result<CommandAction> {
         if let ReplicationRole::Leader(leader_replication) = app_context.replication_role.as_ref() {
             let response_text = format!(

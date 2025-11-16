@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::{any::Any, fmt::Debug};
 
-pub trait RedisDataType: Any + Debug {
+pub trait RedisDataType: Any + Debug + Send + Sync {
     fn to_bytes(&self) -> Result<Vec<u8>>;
     fn as_any(&self) -> &dyn Any;
 }

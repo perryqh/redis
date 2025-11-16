@@ -1,4 +1,4 @@
-use std::io::Cursor;
+use std::{io::Cursor, time::Duration};
 
 use crate::{
     commands::CommandAction,
@@ -47,6 +47,8 @@ impl Follower {
         R: AsyncRead + Unpin,
         W: AsyncWrite + Unpin,
     {
+        // sleep for a bit to let handshaking complete
+        tokio::time::sleep(Duration::from_millis(100)).await;
         let mut buf = [0; 1024];
         loop {
             let n = reader.read(&mut buf).await?;
@@ -57,12 +59,28 @@ impl Follower {
 
             // Parse and execute commands from the buffer
             let mut cursor = Cursor::new(&buf[..n]);
-            while let Ok(Some(command)) = parse_command(&mut cursor) {
-                if let CommandAction::Response(_response) = command.execute(&self.app_context)? {
-                    // do nothing
+            loop {
+                let command = parse_command(&mut cursor)?;
+                match command {
+                    Some(command) => {
+                        dbg!(command.command_name());
+                        if let CommandAction::Response(_response) =
+                            command.execute(&self.app_context)?
+                        {
+                            // do nothing
+                            dbg!("follower thinks it succeeded");
+                        } else {
+                            dbg!("not a commandaction::response!!!!!!");
+                        }
+                    }
+                    None => {
+                        // No more commands in the buffer, exit the loop
+                        break;
+                    }
                 }
             }
         }
+        dbg!("Exiting follower listen loop");
         Ok(())
     }
 
