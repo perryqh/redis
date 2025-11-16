@@ -4,6 +4,7 @@ use anyhow::Result;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 
+use crate::commands::CommandAction;
 use crate::context::AppContext;
 use crate::resp::parse_command;
 
@@ -83,9 +84,26 @@ where
         let mut cursor = Cursor::new(buffer.as_slice());
 
         while let Ok(Some(command)) = parse_command(&mut cursor) {
-            let response = command.execute(app_context)?;
-            writer.write_all(&response).await?;
-            writer.flush().await?;
+            match command.execute(app_context)? {
+                CommandAction::Response(response) => {
+                    writer.write_all(&response).await?;
+                    writer.flush().await?;
+                }
+                CommandAction::PsyncHandshake { response, rdb_data } => {
+                    // Send FULLRESYNC response
+                    writer.write_all(&response).await?;
+                    writer.flush().await?;
+
+                    // Send RDB file
+                    writer.write_all(&rdb_data).await?;
+                    writer.flush().await?;
+
+                    // Connection becomes a replication stream
+                    // For now, just keep the connection open
+                    // TODO: Register follower and propagate write commands
+                    return Ok(());
+                }
+            }
         }
     }
     Ok(())

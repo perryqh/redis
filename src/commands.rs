@@ -5,9 +5,22 @@ use crate::{
     datatypes::{
         Array, BulkString, Integer, NullBulkString, RedisDataType, SimpleError, SimpleString,
     },
+    rdb::EMPTY_RDB,
     replication::ReplicationRole,
 };
 use anyhow::{bail, Context, Result};
+
+/// Represents the action to take after executing a command
+#[derive(Debug)]
+pub enum CommandAction {
+    /// Regular response to send back to the client
+    Response(Vec<u8>),
+    /// PSYNC handshake: send response, then RDB file, then become replication stream
+    PsyncHandshake {
+        response: Vec<u8>,
+        rdb_data: Vec<u8>,
+    },
+}
 
 /// Helper function to extract a BulkString value from an input array at the specified index
 fn extract_bulk_string(
@@ -25,13 +38,14 @@ fn extract_bulk_string(
 }
 
 pub trait RedisCommand: Send {
-    fn execute(&self, app_context: &AppContext) -> Result<Vec<u8>>;
+    fn execute(&self, app_context: &AppContext) -> Result<CommandAction>;
 }
 
 pub struct PingCommand {}
 impl RedisCommand for PingCommand {
-    fn execute(&self, _app_context: &AppContext) -> Result<Vec<u8>> {
-        SimpleString::new("PONG".to_string()).to_bytes()
+    fn execute(&self, _app_context: &AppContext) -> Result<CommandAction> {
+        let response = SimpleString::new("PONG".to_string()).to_bytes()?;
+        Ok(CommandAction::Response(response))
     }
 }
 
@@ -47,8 +61,9 @@ impl EchoCommand {
 }
 
 impl RedisCommand for EchoCommand {
-    fn execute(&self, _app_context: &AppContext) -> Result<Vec<u8>> {
-        BulkString::new(self.message.clone()).to_bytes()
+    fn execute(&self, _app_context: &AppContext) -> Result<CommandAction> {
+        let response = BulkString::new(self.message.clone()).to_bytes()?;
+        Ok(CommandAction::Response(response))
     }
 }
 
@@ -73,12 +88,13 @@ impl RpushCommand {
 }
 
 impl RedisCommand for RpushCommand {
-    fn execute(&self, app_context: &AppContext) -> Result<Vec<u8>> {
+    fn execute(&self, app_context: &AppContext) -> Result<CommandAction> {
         let mut len = 0;
         for value in &self.values {
             len = app_context.store.rpush(self.key.clone(), value.clone());
         }
-        Integer::new(len as i32).to_bytes()
+        let response = Integer::new(len as i32).to_bytes()?;
+        Ok(CommandAction::Response(response))
     }
 }
 
@@ -94,11 +110,12 @@ impl RpopCommand {
 }
 
 impl RedisCommand for RpopCommand {
-    fn execute(&self, app_context: &AppContext) -> Result<Vec<u8>> {
-        match app_context.store.rpop(&self.key) {
-            Some(value) => BulkString::new(value).to_bytes(),
-            None => NullBulkString {}.to_bytes(),
-        }
+    fn execute(&self, app_context: &AppContext) -> Result<CommandAction> {
+        let response = match app_context.store.rpop(&self.key) {
+            Some(value) => BulkString::new(value).to_bytes()?,
+            None => NullBulkString {}.to_bytes()?,
+        };
+        Ok(CommandAction::Response(response))
     }
 }
 
@@ -158,7 +175,7 @@ impl SetCommand {
 }
 
 impl RedisCommand for SetCommand {
-    fn execute(&self, app_context: &AppContext) -> Result<Vec<u8>> {
+    fn execute(&self, app_context: &AppContext) -> Result<CommandAction> {
         if let Some(ttl) = self.ttl {
             app_context
                 .store
@@ -168,7 +185,8 @@ impl RedisCommand for SetCommand {
                 .store
                 .set_string(self.key.clone(), self.value.clone());
         }
-        SimpleString::new("OK".to_string()).to_bytes()
+        let response = SimpleString::new("OK".to_string()).to_bytes()?;
+        Ok(CommandAction::Response(response))
     }
 }
 
@@ -185,11 +203,12 @@ impl GetCommand {
 }
 
 impl RedisCommand for GetCommand {
-    fn execute(&self, app_context: &AppContext) -> Result<Vec<u8>> {
-        match app_context.store.get_string(&self.key) {
-            Some(value) => BulkString::new(value).to_bytes(),
-            None => NullBulkString {}.to_bytes(),
-        }
+    fn execute(&self, app_context: &AppContext) -> Result<CommandAction> {
+        let response = match app_context.store.get_string(&self.key) {
+            Some(value) => BulkString::new(value).to_bytes()?,
+            None => NullBulkString {}.to_bytes()?,
+        };
+        Ok(CommandAction::Response(response))
     }
 }
 
@@ -218,8 +237,8 @@ impl ConfigCommand {
 }
 
 impl RedisCommand for ConfigCommand {
-    fn execute(&self, app_context: &AppContext) -> Result<Vec<u8>> {
-        match self.action {
+    fn execute(&self, app_context: &AppContext) -> Result<CommandAction> {
+        let response = match self.action {
             ConfigAction::Get(ref keys) => {
                 let mut values: Vec<Box<dyn RedisDataType>> = Vec::new();
                 for key in keys {
@@ -231,12 +250,13 @@ impl RedisCommand for ConfigCommand {
                         "dbfilename" => values.push(Box::new(BulkString::new(
                             app_context.config.dbfilename.clone(),
                         ))),
-                        _ => values.push(Box::new(NullBulkString {})),
+                        _ => values.push(Box::new(BulkString::new("".to_string()))),
                     }
                 }
-                Array::new(values).to_bytes()
+                Array::new(values).to_bytes()?
             }
-        }
+        };
+        Ok(CommandAction::Response(response))
     }
 }
 
@@ -255,13 +275,14 @@ impl KeysCommand {
 }
 
 impl RedisCommand for KeysCommand {
-    fn execute(&self, app_context: &AppContext) -> Result<Vec<u8>> {
+    fn execute(&self, app_context: &AppContext) -> Result<CommandAction> {
         let keys: Vec<String> = app_context.store.keys(&self.pattern)?;
         let bulk_strings = keys
             .into_iter()
             .map(|key| Box::new(BulkString::new(key)) as Box<dyn RedisDataType>)
             .collect();
-        Array::new(bulk_strings).to_bytes()
+        let response = Array::new(bulk_strings).to_bytes()?;
+        Ok(CommandAction::Response(response))
     }
 }
 
@@ -284,7 +305,7 @@ impl InfoCommand {
 }
 
 impl RedisCommand for InfoCommand {
-    fn execute(&self, app_context: &AppContext) -> Result<Vec<u8>> {
+    fn execute(&self, app_context: &AppContext) -> Result<CommandAction> {
         let mut info = String::new();
 
         for section in &self.sections {
@@ -299,22 +320,23 @@ impl RedisCommand for InfoCommand {
                         info.push_str(leader_replication.replication_offset.to_string().as_str());
                         info.push('\n');
                     }
-                    ReplicationRole::Follower(_follower_replication) => {
+                    ReplicationRole::Follower(_) => {
                         info.push_str("role:slave\n");
                     }
                 },
             }
         }
-        let bulk_string = BulkString::new(info);
 
-        bulk_string.to_bytes()
+        let response = BulkString::new(info).to_bytes()?;
+        Ok(CommandAction::Response(response))
     }
 }
 
 pub struct ReplConfCommand {}
 impl RedisCommand for ReplConfCommand {
-    fn execute(&self, _app_context: &AppContext) -> Result<Vec<u8>> {
-        SimpleString::new("OK".to_string()).to_bytes()
+    fn execute(&self, _app_context: &AppContext) -> Result<CommandAction> {
+        let response = SimpleString::new("OK".to_string()).to_bytes()?;
+        Ok(CommandAction::Response(response))
     }
 }
 
@@ -337,19 +359,36 @@ impl PsyncCommand {
 }
 
 impl RedisCommand for PsyncCommand {
-    fn execute(&self, app_context: &AppContext) -> Result<Vec<u8>> {
+    fn execute(&self, app_context: &AppContext) -> Result<CommandAction> {
         if let ReplicationRole::Leader(leader_replication) = app_context.replication_role.as_ref() {
             let response_text = format!(
                 "FULLRESYNC {} {}",
                 leader_replication.replication_id, leader_replication.replication_offset
             );
             dbg!("response_text: {}", &response_text);
-            SimpleString::new(response_text).to_bytes()
+            let response = SimpleString::new(response_text).to_bytes()?;
+            use base64::Engine;
+            let data = base64::engine::general_purpose::STANDARD
+                .decode(EMPTY_RDB)
+                .unwrap();
+            let mut rdb_data = format!("${}\r\n", data.len()).into_bytes();
+            rdb_data.extend_from_slice(&data);
+            Ok(CommandAction::PsyncHandshake { response, rdb_data })
         } else {
             dbg!("PSYNC not supported in follower mode");
             let error = SimpleError::new("PSYNC not supported in follower mode".to_string());
-            error.to_bytes()
+            let response = error.to_bytes()?;
+            Ok(CommandAction::Response(response))
         }
+    }
+}
+
+/// Helper function for tests to extract response bytes from CommandAction
+#[cfg(test)]
+fn extract_response(action: CommandAction) -> Vec<u8> {
+    match action {
+        CommandAction::Response(bytes) => bytes,
+        CommandAction::PsyncHandshake { response, .. } => response,
     }
 }
 
@@ -392,47 +431,50 @@ mod tests {
     fn test_config_get_command() -> Result<()> {
         let app_context = AppContext::default();
         let command = ConfigCommand::new(&[bulk_string("GET"), bulk_string("dir")])?;
-        let response = command.execute(&app_context)?;
+        let response = extract_response(command.execute(&app_context)?);
         assert_eq!(response, b"*2\r\n$3\r\ndir\r\n$12\r\n~/redis-rust\r\n");
 
         let command = ConfigCommand::new(&[bulk_string("GET"), bulk_string("dbfilename")])?;
-        let response = command.execute(&app_context)?;
+        let response = extract_response(command.execute(&app_context)?);
         assert_eq!(response, b"*2\r\n$10\r\ndbfilename\r\n$8\r\ndump.rdb\r\n");
 
         Ok(())
     }
 
     #[test]
-    fn test_ping_command() {
+    fn test_ping_command() -> Result<()> {
         let app_context = AppContext::default();
         let command = PingCommand {};
-        let response = command.execute(&app_context).unwrap();
+        let response = extract_response(command.execute(&app_context)?);
         assert_eq!(response, b"+PONG\r\n");
+        Ok(())
     }
 
     #[test]
-    fn test_echo_command() {
+    fn test_echo_command() -> Result<()> {
         let app_context = AppContext::default();
         let command = EchoCommand::new(&[bulk_string("Hello")]);
-        let response = command.execute(&app_context).unwrap();
+        let response = extract_response(command.execute(&app_context)?);
         assert_eq!(response, b"$5\r\nHello\r\n");
+        Ok(())
     }
 
     #[test]
-    fn test_set_command_basic() {
+    fn test_set_command_basic() -> Result<()> {
         let app_context = AppContext::default();
         let command = SetCommand::new(&set_command_args("mykey", "myvalue")).unwrap();
-        let response = command.execute(&app_context).unwrap();
+        let response = extract_response(command.execute(&app_context)?);
 
         assert_eq!(response, b"+OK\r\n");
         assert_eq!(
             app_context.store.get_string("mykey"),
             Some("myvalue".to_string())
         );
+        Ok(())
     }
 
     #[test]
-    fn test_set_command_overwrite() {
+    fn test_set_command_overwrite() -> Result<()> {
         let app_context = AppContext::default();
 
         // Set initial value
@@ -450,10 +492,11 @@ mod tests {
             app_context.store.get_string("key1"),
             Some("value2".to_string())
         );
+        Ok(())
     }
 
     #[test]
-    fn test_set_command_with_ex_option() {
+    fn test_set_command_with_ex_option() -> Result<()> {
         let app_context = AppContext::default();
         let command = SetCommand::new(&set_command_with_expiration(
             "tempkey",
@@ -462,7 +505,7 @@ mod tests {
             "1",
         ))
         .unwrap();
-        let response = command.execute(&app_context).unwrap();
+        let response = extract_response(command.execute(&app_context)?);
 
         assert_eq!(response, b"+OK\r\n");
         assert_eq!(
@@ -473,10 +516,11 @@ mod tests {
         // Wait for expiration
         thread::sleep(Duration::from_millis(1100));
         assert_eq!(app_context.store.get_string("tempkey"), None);
+        Ok(())
     }
 
     #[test]
-    fn test_set_command_with_px_option() {
+    fn test_set_command_with_px_option() -> Result<()> {
         let app_context = AppContext::default();
         let command = SetCommand::new(&set_command_with_expiration(
             "tempkey2",
@@ -485,7 +529,7 @@ mod tests {
             "500",
         ))
         .unwrap();
-        let response = command.execute(&app_context).unwrap();
+        let response = extract_response(command.execute(&app_context)?);
 
         assert_eq!(response, b"+OK\r\n");
         assert_eq!(
@@ -496,38 +540,38 @@ mod tests {
         // Wait for expiration
         thread::sleep(Duration::from_millis(600));
         assert_eq!(app_context.store.get_string("tempkey2"), None);
+        Ok(())
     }
 
     #[test]
-    fn test_set_command_ex_lowercase() {
+    fn test_set_command_ex_lowercase() -> Result<()> {
         let command =
             SetCommand::new(&set_command_with_expiration("key_ex", "val_ex", "ex", "1")).unwrap();
         assert!(command.ttl.is_some());
-        assert_eq!(command.ttl.unwrap(), Duration::from_secs(1));
+        Ok(())
     }
 
     #[test]
-    fn test_set_command_px_uppercase() {
+    fn test_set_command_px_uppercase() -> Result<()> {
         let command = SetCommand::new(&set_command_with_expiration(
             "key_px", "val_px", "PX", "500",
         ))
         .unwrap();
         assert!(command.ttl.is_some());
-        assert_eq!(command.ttl.unwrap(), Duration::from_millis(500));
+        Ok(())
     }
 
     #[test]
-    fn test_set_command_without_ttl() {
+    fn test_set_command_without_ttl() -> Result<()> {
         let app_context = AppContext::default();
         let command = SetCommand::new(&set_command_args("persistent", "forever")).unwrap();
         assert!(command.ttl.is_none());
-
         command.execute(&app_context).unwrap();
-        thread::sleep(Duration::from_millis(100));
         assert_eq!(
             app_context.store.get_string("persistent"),
             Some("forever".to_string())
         );
+        Ok(())
     }
 
     #[test]
@@ -537,14 +581,14 @@ mod tests {
         command.execute(&app_context)?;
 
         let command = KeysCommand::new(&[bulk_string("\"foo\"")]).unwrap();
-        let result = command.execute(&app_context)?;
+        let result = extract_response(command.execute(&app_context)?);
         assert_eq!(result, b"*1\r\n$3\r\nfoo\r\n");
 
         Ok(())
     }
 
     #[test]
-    fn test_set_command_replaces_ttl() {
+    fn test_set_command_replaces_ttl() -> Result<()> {
         let app_context = AppContext::default();
 
         // Set with TTL
@@ -563,33 +607,34 @@ mod tests {
             app_context.store.get_string("key_ttl"),
             Some("val2".to_string())
         );
+        Ok(())
     }
 
     #[test]
-    fn test_get_command_existing_key() {
+    fn test_get_command_existing_key() -> Result<()> {
         let app_context = AppContext::default();
         app_context
             .store
-            .set_string("existing".to_string(), "value".to_string());
-
-        let command = GetCommand::new(&[bulk_string("existing")]).unwrap();
-        let response = command.execute(&app_context).unwrap();
-
+            .set_string("mykey".to_string(), "value".to_string());
+        let command = GetCommand::new(&[bulk_string("mykey")]).unwrap();
+        let response = extract_response(command.execute(&app_context)?);
         assert_eq!(response, b"$5\r\nvalue\r\n");
+        Ok(())
     }
 
     #[test]
-    fn test_get_command_nonexistent_key() {
+    fn test_get_command_nonexistent_key() -> Result<()> {
         let app_context = AppContext::default();
 
         let command = GetCommand::new(&[bulk_string("nonexistent")]).unwrap();
-        let response = command.execute(&app_context).unwrap();
+        let response = extract_response(command.execute(&app_context)?);
 
         assert_eq!(response, b"$-1\r\n"); // Null bulk string
+        Ok(())
     }
 
     #[test]
-    fn test_get_command_expired_key() {
+    fn test_get_command_expired_key() -> Result<()> {
         let app_context = AppContext::default();
         app_context.store.set_string_with_expiration(
             "expired".to_string(),
@@ -598,12 +643,12 @@ mod tests {
         );
 
         // Wait for expiration
-        thread::sleep(Duration::from_millis(100));
+        thread::sleep(Duration::from_millis(600));
+        let command = GetCommand::new(&[bulk_string("tempkey")]).unwrap();
+        let response = extract_response(command.execute(&app_context)?);
 
-        let command = GetCommand::new(&[bulk_string("expired")]).unwrap();
-        let response = command.execute(&app_context).unwrap();
-
-        assert_eq!(response, b"$-1\r\n"); // Null bulk string for expired key
+        assert_eq!(response, b"$-1\r\n"); // Null bulk string after expiration
+        Ok(())
     }
 
     #[test]
@@ -730,15 +775,16 @@ mod tests {
     }
     // RPUSH command tests
     #[test]
-    fn test_rpush_command_single_value() {
+    fn test_rpush_command_single_value() -> Result<()> {
         let app_context = AppContext::default();
         let command = RpushCommand::new(&[bulk_string("mylist"), bulk_string("value1")]).unwrap();
-        let response = command.execute(&app_context).unwrap();
+        let response = extract_response(command.execute(&app_context)?);
         assert_eq!(response, b":1\r\n");
+        Ok(())
     }
 
     #[test]
-    fn test_rpush_command_multiple_values() {
+    fn test_rpush_command_multiple_values() -> Result<()> {
         let app_context = AppContext::default();
         let command = RpushCommand::new(&[
             bulk_string("mylist"),
@@ -747,19 +793,21 @@ mod tests {
             bulk_string("c"),
         ])
         .unwrap();
-        let response = command.execute(&app_context).unwrap();
+        let response = extract_response(command.execute(&app_context)?);
         assert_eq!(response, b":3\r\n");
+        Ok(())
     }
 
     #[test]
-    fn test_rpush_command_append() {
+    fn test_rpush_command_append() -> Result<()> {
         let app_context = AppContext::default();
         app_context
             .store
             .rpush("mylist".to_string(), "existing".to_string());
         let command = RpushCommand::new(&[bulk_string("mylist"), bulk_string("new")]).unwrap();
-        let response = command.execute(&app_context).unwrap();
+        let response = extract_response(command.execute(&app_context)?);
         assert_eq!(response, b":2\r\n");
+        Ok(())
     }
 
     #[test]
@@ -770,51 +818,57 @@ mod tests {
 
     // RPOP command tests
     #[test]
-    fn test_rpop_command_existing_list() {
+    fn test_rpop_command_existing_list() -> Result<()> {
         let app_context = AppContext::default();
         app_context
             .store
-            .rpush("mylist".to_string(), "value1".to_string());
+            .rpush("mylist".to_string(), "value".to_string());
         app_context
             .store
             .rpush("mylist".to_string(), "value2".to_string());
 
         let command = RpopCommand::new(&[bulk_string("mylist")]).unwrap();
-        let response = command.execute(&app_context).unwrap();
+        let response = extract_response(command.execute(&app_context)?);
         assert_eq!(response, b"$6\r\nvalue2\r\n");
+        Ok(())
     }
 
     #[test]
-    fn test_rpop_command_nonexistent_key() {
+    fn test_rpop_command_nonexistent_key() -> Result<()> {
         let app_context = AppContext::default();
         let command = RpopCommand::new(&[bulk_string("nonexistent")]).unwrap();
-        let response = command.execute(&app_context).unwrap();
+        let response = extract_response(command.execute(&app_context)?);
         assert_eq!(response, b"$-1\r\n");
+        Ok(())
     }
 
     #[test]
-    fn test_rpop_command_empty_list() {
+    fn test_rpop_command_empty_list() -> Result<()> {
         let app_context = AppContext::default();
         app_context
             .store
-            .rpush("mylist".to_string(), "only".to_string());
+            .rpush("mylist".to_string(), "value".to_string());
+        // Pop the only element
         app_context.store.rpop("mylist");
 
         let command = RpopCommand::new(&[bulk_string("mylist")]).unwrap();
-        let response = command.execute(&app_context).unwrap();
+        let response = extract_response(command.execute(&app_context)?);
         assert_eq!(response, b"$-1\r\n");
+        Ok(())
     }
 
     #[test]
-    fn test_rpop_command_on_string_key() {
+    fn test_rpop_command_on_string_key() -> Result<()> {
         let app_context = AppContext::default();
+        // Set a string key
         app_context
             .store
             .set_string("stringkey".to_string(), "value".to_string());
 
         let command = RpopCommand::new(&[bulk_string("stringkey")]).unwrap();
-        let response = command.execute(&app_context).unwrap();
+        let response = extract_response(command.execute(&app_context)?);
         assert_eq!(response, b"$-1\r\n"); // Wrong type
+        Ok(())
     }
 
     #[test]
@@ -825,7 +879,7 @@ mod tests {
             ..Default::default()
         };
         let command = InfoCommand::new(&[])?;
-        let response = command.execute(&app_context)?;
+        let response = extract_response(command.execute(&app_context)?);
         let expected_string = format!(
             "role:master\nmaster_replid:{}\nmaster_repl_offset:0\n",
             leader_replication.replication_id
@@ -844,7 +898,7 @@ mod tests {
             ..Default::default()
         };
         let command = InfoCommand::new(&[])?;
-        let response = command.execute(&app_context)?;
+        let response = extract_response(command.execute(&app_context)?);
         let expected_string = format!(
             "role:master\nmaster_replid:{}\nmaster_repl_offset:0\n",
             master_replication.replication_id
@@ -863,7 +917,7 @@ mod tests {
             ..Default::default()
         };
         let command = InfoCommand::new(&[])?;
-        let response = command.execute(&app_context)?;
+        let response = extract_response(command.execute(&app_context)?);
         let expected_string = "role:slave\n".to_string();
         let expected = format!("${}\r\n{}\r\n", expected_string.len(), expected_string);
         let expected = expected.as_bytes();

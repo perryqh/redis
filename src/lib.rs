@@ -5,6 +5,7 @@ pub mod connection;
 pub mod context;
 pub mod datatypes;
 pub mod follower;
+pub mod leader;
 pub mod matcher;
 pub mod rdb;
 pub mod replication;
