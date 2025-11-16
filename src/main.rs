@@ -9,6 +9,7 @@ use codecrafters_redis::connection::handle_connection;
 use codecrafters_redis::context::AppContext;
 use codecrafters_redis::follower::Follower;
 use codecrafters_redis::rdb::parse_rdb_file;
+
 use codecrafters_redis::replication::{FollowerReplication, LeaderReplication, ReplicationRole};
 use codecrafters_redis::store::Store;
 use tokio::net::TcpListener;

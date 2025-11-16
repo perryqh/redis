@@ -14,13 +14,86 @@ use crate::resp::parse_command;
 ///
 /// # Arguments
 /// * `socket` - The TCP stream for the client connection
-/// * `store` - A reference to the shared key-value store
+/// * `app_context` - A reference to the application context
 ///
 /// # Errors
 /// Returns an error if there's an I/O failure or command parsing error
-pub async fn handle_connection(mut socket: TcpStream, app_context: AppContext) -> Result<()> {
-    let (reader, writer) = socket.split();
-    handle_connection_impl(reader, writer, &app_context).await
+pub async fn handle_connection(socket: TcpStream, app_context: AppContext) -> Result<()> {
+    handle_connection_with_stream(socket, &app_context).await
+}
+
+/// Handles a connection with access to the full TcpStream for follower registration
+async fn handle_connection_with_stream(
+    mut socket: TcpStream,
+    app_context: &AppContext,
+) -> Result<()> {
+    let mut buffer = vec![0; 1024];
+
+    loop {
+        let n = socket.read(&mut buffer).await?;
+
+        if n == 0 {
+            break;
+        }
+
+        buffer.truncate(n);
+        let mut cursor = Cursor::new(buffer.as_slice());
+
+        while let Ok(Some(command)) = parse_command(&mut cursor) {
+            match command.execute(app_context)? {
+                CommandAction::Response(response) => {
+                    socket.write_all(&response).await?;
+                    socket.flush().await?;
+                }
+                CommandAction::PsyncHandshake { response, rdb_data } => {
+                    // Send FULLRESYNC response
+                    socket.write_all(&response).await?;
+                    socket.flush().await?;
+
+                    // Send RDB file
+                    socket.write_all(&rdb_data).await?;
+                    socket.flush().await?;
+
+                    // Register follower and become replication stream
+                    if let Some(ref replication_manager) = app_context.replication_manager {
+                        let (reader, writer) = socket.into_split();
+                        replication_manager.register_follower(writer).await;
+
+                        // Keep connection open, reading any follower data
+                        keep_follower_connected(reader).await?;
+                    }
+                    return Ok(());
+                }
+            }
+        }
+
+        buffer.resize(1024, 0);
+    }
+    Ok(())
+}
+
+/// Keeps a follower connection alive by reading until disconnect
+async fn keep_follower_connected<R>(mut reader: R) -> Result<()>
+where
+    R: AsyncRead + Unpin,
+{
+    let mut buffer = vec![0; 1024];
+    loop {
+        match reader.read(&mut buffer).await {
+            Ok(0) => {
+                eprintln!("Follower disconnected");
+                break;
+            }
+            Ok(_) => {
+                // Follower sent data, ignore for now
+            }
+            Err(e) => {
+                eprintln!("Error reading from follower: {}", e);
+                break;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Generic connection handler that works with any async reader/writer
@@ -98,9 +171,9 @@ where
                     writer.write_all(&rdb_data).await?;
                     writer.flush().await?;
 
-                    // Connection becomes a replication stream
-                    // For now, just keep the connection open
-                    // TODO: Register follower and propagate write commands
+                    // For generic streams, just keep connection open
+                    // (Real follower registration happens in handle_connection_with_stream)
+                    eprintln!("PSYNC handshake complete (generic stream)");
                     return Ok(());
                 }
             }

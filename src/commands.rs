@@ -185,6 +185,25 @@ impl RedisCommand for SetCommand {
                 .store
                 .set_string(self.key.clone(), self.value.clone());
         }
+
+        // Propagate to followers if we're a leader
+        if let Some(ref replication_manager) = app_context.replication_manager {
+            let array = Array::new(vec![
+                Box::new(BulkString::new("SET".to_string())),
+                Box::new(BulkString::new(self.key.clone())),
+                Box::new(BulkString::new(self.value.clone())),
+            ]);
+            let command_bytes = array.to_bytes()?;
+
+            // Spawn async task to propagate (only if tokio runtime is available)
+            let manager = replication_manager.clone();
+            if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                handle.spawn(async move {
+                    let _ = manager.propagate_write(&command_bytes).await;
+                });
+            }
+        }
+
         let response = SimpleString::new("OK".to_string()).to_bytes()?;
         Ok(CommandAction::Response(response))
     }
