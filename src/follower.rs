@@ -42,7 +42,7 @@ impl Follower {
         self.listen(&mut reader, &mut writer).await
     }
 
-    async fn listen<R, W>(&self, reader: &mut R, _writer: &mut W) -> Result<()>
+    async fn listen<R, W>(&self, reader: &mut R, writer: &mut W) -> Result<()>
     where
         R: AsyncRead + Unpin,
         W: AsyncWrite + Unpin,
@@ -50,6 +50,7 @@ impl Follower {
         // sleep for a bit to let handshaking complete
         tokio::time::sleep(Duration::from_millis(100)).await;
         let mut buf = [0; 1024];
+        let mut offset = 0;
         loop {
             let n = reader.read(&mut buf).await?;
             if n == 0 {
@@ -64,12 +65,13 @@ impl Follower {
                 match command {
                     Some(command) => {
                         dbg!(command.command_name());
-                        if let CommandAction::Response(_response) =
-                            command.execute(&self.app_context)?
+                        if let Some(CommandAction::Response(response)) = command
+                            .execute_leader_command_from_replica(&self.app_context, offset)?
                         {
-                            // do nothing
-                            dbg!("follower thinks it succeeded");
+                            writer.write_all(&response).await?;
+                            writer.flush().await?;
                         } else {
+                            offset += n;
                             dbg!("not a commandaction::response!!!!!!");
                         }
                     }
@@ -483,6 +485,136 @@ mod tests {
         assert_eq!(value, Some("bop".to_string()));
         let value = app_context.store.get_string("foo");
         assert_eq!(value, Some("bar".to_string()));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_listen_replconf_getack() -> Result<()> {
+        let app_context = AppContext::default();
+        let follower = Follower::new(app_context.clone());
+        let array = Array::from_strs(vec!["REPLCONF", "GETACK", "*"]);
+        let mut reader = std::io::Cursor::new(array.to_bytes()?);
+        let mut writer = Vec::new();
+        let result = follower.listen(&mut reader, &mut writer).await;
+        assert!(result.is_ok());
+
+        // Should respond with REPLCONF ACK 0 (initial offset, no commands processed before GETACK)
+        let expected = Array::from_strs(vec!["REPLCONF", "ACK", "0"]).to_bytes()?;
+        assert_eq!(writer, expected);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_listen_replconf_getack_after_set() -> Result<()> {
+        let app_context = AppContext::default();
+        let follower = Follower::new(app_context.clone());
+
+        // Send SET and GETACK in the same buffer
+        // NOTE: Current implementation increments offset by full buffer size (n) for each non-GETACK command
+        // When both commands are in one read(), n = total size, so offset after SET = total_size
+        let set_array = Array::from_strs(vec!["SET", "key", "value"]);
+        let getack_array = Array::from_strs(vec!["REPLCONF", "GETACK", "*"]);
+        let mut bytes = set_array.to_bytes()?;
+        bytes.extend_from_slice(&getack_array.to_bytes()?);
+        let total_size = bytes.len();
+
+        let mut reader = std::io::Cursor::new(bytes);
+        let mut writer = Vec::new();
+        let result = follower.listen(&mut reader, &mut writer).await;
+        assert!(result.is_ok());
+
+        // With current implementation, offset = total_size (including GETACK bytes)
+        let expected =
+            Array::from_strs(vec!["REPLCONF", "ACK", &total_size.to_string()]).to_bytes()?;
+        assert_eq!(writer, expected);
+
+        // Verify SET was executed
+        let value = app_context.store.get_string("key");
+        assert_eq!(value, Some("value".to_string()));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_listen_replconf_getack_multiple_commands() -> Result<()> {
+        let app_context = AppContext::default();
+        let follower = Follower::new(app_context.clone());
+
+        // Send multiple SET commands, then REPLCONF GETACK
+        // NOTE: When all commands are in one buffer, each non-GETACK command adds n (total buffer size) to offset
+        let set1 = Array::from_strs(vec!["SET", "key1", "value1"]);
+        let set2 = Array::from_strs(vec!["SET", "key2", "value2"]);
+        let getack = Array::from_strs(vec!["REPLCONF", "GETACK", "*"]);
+
+        let mut bytes = set1.to_bytes()?;
+        bytes.extend_from_slice(&set2.to_bytes()?);
+        bytes.extend_from_slice(&getack.to_bytes()?);
+        let total_size = bytes.len();
+
+        let mut reader = std::io::Cursor::new(bytes);
+        let mut writer = Vec::new();
+        let result = follower.listen(&mut reader, &mut writer).await;
+        assert!(result.is_ok());
+
+        // Current implementation: 2 SET commands × total_size = 2 * total_size
+        let expected_offset = total_size * 2;
+        let expected =
+            Array::from_strs(vec!["REPLCONF", "ACK", &expected_offset.to_string()]).to_bytes()?;
+        assert_eq!(writer, expected);
+
+        // Verify both SETs were executed
+        assert_eq!(
+            app_context.store.get_string("key1"),
+            Some("value1".to_string())
+        );
+        assert_eq!(
+            app_context.store.get_string("key2"),
+            Some("value2".to_string())
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_listen_replconf_non_getack() -> Result<()> {
+        let app_context = AppContext::default();
+        let follower = Follower::new(app_context.clone());
+
+        // REPLCONF with non-GETACK action should not respond
+        let array = Array::from_strs(vec!["REPLCONF", "listening-port", "6380"]);
+        let mut reader = std::io::Cursor::new(array.to_bytes()?);
+        let mut writer = Vec::new();
+        let result = follower.listen(&mut reader, &mut writer).await;
+        assert!(result.is_ok());
+
+        // Should not write anything to writer (only GETACK responds)
+        assert!(writer.is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_listen_replconf_getack_response_format() -> Result<()> {
+        let app_context = AppContext::default();
+        let follower = Follower::new(app_context.clone());
+
+        // Test that GETACK returns proper RESP array format
+        let array = Array::from_strs(vec!["REPLCONF", "GETACK", "*"]);
+        let mut reader = std::io::Cursor::new(array.to_bytes()?);
+        let mut writer = Vec::new();
+        let result = follower.listen(&mut reader, &mut writer).await;
+        assert!(result.is_ok());
+
+        // Parse response to verify it's a valid RESP array
+        let mut cursor = std::io::Cursor::new(&writer[..]);
+        let response = crate::resp::parse_data_type(&mut cursor)?;
+        assert!(response.is_some());
+
+        // Verify it's an array with 3 elements: REPLCONF, ACK, offset
+        let data = response.unwrap();
+        let array = data
+            .as_any()
+            .downcast_ref::<Array>()
+            .expect("Response should be an Array");
+        assert_eq!(array.values.len(), 3);
+
         Ok(())
     }
 }

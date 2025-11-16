@@ -71,7 +71,7 @@ pub fn parse_command(cursor: &mut Cursor<&[u8]>) -> Result<Option<Box<dyn RedisC
                             return Ok(Some(Box::new(info_command)));
                         }
                         "REPLCONF" if !array.values.is_empty() => {
-                            let replconf_command = ReplConfCommand {};
+                            let replconf_command = ReplConfCommand::new(&array.values[1..])?;
                             return Ok(Some(Box::new(replconf_command)));
                         }
                         "PSYNC" if array.values.len() >= 3 => {

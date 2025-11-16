@@ -39,6 +39,15 @@ fn extract_bulk_string(
 
 pub trait RedisCommand: Send {
     fn execute(&self, app_context: &AppContext) -> Result<CommandAction>;
+    fn execute_leader_command_from_replica(
+        &self,
+        app_context: &AppContext,
+        _offset: usize,
+    ) -> Result<Option<CommandAction>> {
+        let _result = self.execute(app_context)?;
+        // By default, replicas do not respond to the leader
+        Ok(None)
+    }
     fn command_name(&self) -> &'static str;
 }
 
@@ -388,11 +397,37 @@ impl RedisCommand for InfoCommand {
     }
 }
 
-pub struct ReplConfCommand {}
+pub struct ReplConfCommand {
+    pub action: Option<String>,
+}
+
+impl ReplConfCommand {
+    pub fn new(input_array: &[Box<dyn RedisDataType>]) -> Result<Self> {
+        // Extract required arguments
+        let action = extract_bulk_string(input_array, 0, "action").ok();
+
+        Ok(Self { action })
+    }
+}
 impl RedisCommand for ReplConfCommand {
     fn execute(&self, _app_context: &AppContext) -> Result<CommandAction> {
         let response = SimpleString::new("OK".to_string()).to_bytes()?;
         Ok(CommandAction::Response(response))
+    }
+
+    fn execute_leader_command_from_replica(
+        &self,
+        _app_context: &AppContext,
+        offset: usize,
+    ) -> Result<Option<CommandAction>> {
+        if let Some(action) = &self.action {
+            if action == "GETACK" {
+                let response =
+                    Array::from_strs(vec!["REPLCONF", "ACK", format!("{}", offset).as_str()]);
+                return Ok(Some(CommandAction::Response(response.to_bytes()?)));
+            }
+        }
+        Ok(None)
     }
 
     fn command_name(&self) -> &'static str {
@@ -986,6 +1021,115 @@ mod tests {
         let expected = format!("${}\r\n{}\r\n", expected_string.len(), expected_string);
         let expected = expected.as_bytes();
         assert_eq!(response, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn test_replconf_command_basic() -> Result<()> {
+        let app_context = AppContext::default();
+        let command = ReplConfCommand::new(&[bulk_string("listening-port"), bulk_string("6380")])?;
+        let result = command.execute(&app_context)?;
+
+        match result {
+            CommandAction::Response(response) => {
+                assert_eq!(response, b"+OK\r\n");
+            }
+            _ => panic!("Expected CommandAction::Response"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_replconf_command_capa() -> Result<()> {
+        let app_context = AppContext::default();
+        let command = ReplConfCommand::new(&[bulk_string("capa"), bulk_string("psync2")])?;
+        let result = command.execute(&app_context)?;
+
+        match result {
+            CommandAction::Response(response) => {
+                assert_eq!(response, b"+OK\r\n");
+            }
+            _ => panic!("Expected CommandAction::Response"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_replconf_command_no_args() -> Result<()> {
+        let command = ReplConfCommand::new(&[])?;
+        assert!(command.action.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn test_replconf_command_getack() -> Result<()> {
+        let app_context = AppContext::default();
+        let command = ReplConfCommand::new(&[bulk_string("GETACK"), bulk_string("*")])?;
+        let offset = 42;
+        let result = command.execute_leader_command_from_replica(&app_context, offset)?;
+
+        assert!(result.is_some());
+        match result.unwrap() {
+            CommandAction::Response(response) => {
+                // Should return REPLCONF ACK 42
+                let expected = Array::from_strs(vec!["REPLCONF", "ACK", "42"]).to_bytes()?;
+                assert_eq!(response, expected);
+            }
+            _ => panic!("Expected CommandAction::Response"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_replconf_command_getack_zero_offset() -> Result<()> {
+        let app_context = AppContext::default();
+        let command = ReplConfCommand::new(&[bulk_string("GETACK"), bulk_string("*")])?;
+        let offset = 0;
+        let result = command.execute_leader_command_from_replica(&app_context, offset)?;
+
+        assert!(result.is_some());
+        match result.unwrap() {
+            CommandAction::Response(response) => {
+                let expected = Array::from_strs(vec!["REPLCONF", "ACK", "0"]).to_bytes()?;
+                assert_eq!(response, expected);
+            }
+            _ => panic!("Expected CommandAction::Response"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_replconf_command_non_getack_returns_none() -> Result<()> {
+        let app_context = AppContext::default();
+        let command = ReplConfCommand::new(&[bulk_string("listening-port"), bulk_string("6380")])?;
+        let result = command.execute_leader_command_from_replica(&app_context, 100)?;
+
+        // Non-GETACK commands should not respond to leader
+        assert!(result.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn test_replconf_command_name() {
+        let command = ReplConfCommand::new(&[]).unwrap();
+        assert_eq!(command.command_name(), "REPLCONF");
+    }
+
+    #[test]
+    fn test_replconf_command_case_insensitive_getack() -> Result<()> {
+        let app_context = AppContext::default();
+
+        // Test lowercase
+        let command = ReplConfCommand::new(&[bulk_string("getack"), bulk_string("*")])?;
+        let result = command.execute_leader_command_from_replica(&app_context, 10)?;
+        // Should return None because action is stored as-is and compared with ==
+        assert!(result.is_none());
+
+        // Test uppercase (should work)
+        let command = ReplConfCommand::new(&[bulk_string("GETACK"), bulk_string("*")])?;
+        let result = command.execute_leader_command_from_replica(&app_context, 10)?;
+        assert!(result.is_some());
+
         Ok(())
     }
 }
