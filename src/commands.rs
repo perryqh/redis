@@ -318,6 +318,34 @@ impl RedisCommand for ConfigCommand {
 }
 
 #[derive(Debug)]
+pub struct WaitCommand {
+    pub num_replicas: u32,
+    pub timeout: u32,
+}
+
+impl WaitCommand {
+    pub fn new(input_array: &[Box<dyn RedisDataType>]) -> Result<Self> {
+        let num_replicas = extract_bulk_string(input_array, 0, "num_replicas")?.parse::<u32>()?;
+        let timeout = extract_bulk_string(input_array, 1, "timeout")?.parse::<u32>()?;
+        Ok(WaitCommand {
+            num_replicas,
+            timeout,
+        })
+    }
+}
+
+impl RedisCommand for WaitCommand {
+    fn command_name(&self) -> &'static str {
+        "WAIT"
+    }
+
+    fn execute(&self, _app_context: &AppContext) -> Result<CommandAction> {
+        let integer_response = Integer::new(0_i32);
+        Ok(CommandAction::Response(integer_response.to_bytes()?))
+    }
+}
+
+#[derive(Debug)]
 pub struct KeysCommand {
     pub pattern: String,
 }
@@ -1131,6 +1159,24 @@ mod tests {
         let command = ReplConfCommand::new(&[bulk_string("GETACK"), bulk_string("*")])?;
         let result = command.execute_leader_command_from_replica(&app_context, 10)?;
         assert!(result.is_some());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_wait_command() -> Result<()> {
+        let app_context = AppContext::default();
+
+        // Test wait command
+        let command = WaitCommand::new(&[bulk_string("1"), bulk_string("100")])?;
+        let result = command.execute(&app_context)?;
+
+        match result {
+            CommandAction::Response(response) => {
+                assert_eq!(response, Integer::new(0).to_bytes()?);
+            }
+            _ => panic!("Expected CommandAction::Response"),
+        }
 
         Ok(())
     }

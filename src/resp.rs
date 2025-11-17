@@ -4,7 +4,7 @@ use anyhow::Result;
 
 use crate::commands::{
     ConfigCommand, EchoCommand, GetCommand, InfoCommand, KeysCommand, PingCommand, PsyncCommand,
-    RedisCommand, ReplConfCommand, RpopCommand, RpushCommand, SetCommand,
+    RedisCommand, ReplConfCommand, RpopCommand, RpushCommand, SetCommand, WaitCommand,
 };
 use crate::datatypes::{Array, BulkString, Integer, RedisDataType, SimpleError, SimpleString};
 
@@ -77,6 +77,10 @@ pub fn parse_command(cursor: &mut Cursor<&[u8]>) -> Result<Option<Box<dyn RedisC
                         "PSYNC" if array.values.len() >= 3 => {
                             let psync_command = PsyncCommand::new(&array.values[1..])?;
                             return Ok(Some(Box::new(psync_command)));
+                        }
+                        "WAIT" if array.values.len() >= 3 => {
+                            let wait_command = WaitCommand::new(&array.values[1..])?;
+                            return Ok(Some(Box::new(wait_command)));
                         }
 
                         _ => {
