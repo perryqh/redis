@@ -27,6 +27,14 @@ impl ReplicationManager {
         }
     }
 
+    pub async fn number_of_zero_byte_sent_followers(&self) -> usize {
+        let followers = self.followers.read().await;
+        followers
+            .iter()
+            .filter(|follower| follower.bytes_written.load(Ordering::Relaxed) == 0)
+            .count()
+    }
+
     /// Registers a new follower connection
     ///
     /// # Arguments

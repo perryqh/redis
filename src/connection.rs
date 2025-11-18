@@ -6,6 +6,7 @@ use tokio::net::TcpStream;
 
 use crate::commands::CommandAction;
 use crate::context::AppContext;
+use crate::datatypes::{Integer, RedisDataType};
 use crate::resp::parse_command;
 
 /// Handles a single client connection
@@ -63,6 +64,33 @@ async fn handle_connection_with_stream(
                         keep_follower_connected(reader).await?;
                     }
                     return Ok(());
+                }
+                CommandAction::ReplicaHealthCheck {
+                    timeout_milliseconds,
+                    num_replicas,
+                } => {
+                    let (num_followers, num_zero_byte_sent_followers) =
+                        if let Some(ref replication_manager) = app_context.replication_manager {
+                            (
+                                replication_manager.follower_count().await,
+                                replication_manager
+                                    .number_of_zero_byte_sent_followers()
+                                    .await,
+                            )
+                        } else {
+                            (0, 0)
+                        };
+                    let integer_response = if num_zero_byte_sent_followers >= num_replicas as usize
+                        || num_zero_byte_sent_followers == num_followers
+                    {
+                        Integer::new(num_zero_byte_sent_followers as i32)
+                    } else {
+                        Integer::new(0_i32)
+                    };
+                    dbg!(timeout_milliseconds);
+
+                    socket.write_all(&integer_response.to_bytes()?).await?;
+                    socket.flush().await?;
                 }
             }
         }
@@ -175,6 +203,13 @@ where
                     // (Real follower registration happens in handle_connection_with_stream)
                     eprintln!("PSYNC handshake complete (generic stream)");
                     return Ok(());
+                }
+                CommandAction::ReplicaHealthCheck {
+                    timeout_milliseconds,
+                    num_replicas,
+                } => {
+                    dbg!(timeout_milliseconds, num_replicas);
+                    todo!()
                 }
             }
         }

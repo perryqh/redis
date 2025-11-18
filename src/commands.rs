@@ -20,6 +20,10 @@ pub enum CommandAction {
         response: Vec<u8>,
         rdb_data: Vec<u8>,
     },
+    ReplicaHealthCheck {
+        timeout_milliseconds: u32,
+        num_replicas: u32,
+    },
 }
 
 /// Helper function to extract a BulkString value from an input array at the specified index
@@ -320,7 +324,7 @@ impl RedisCommand for ConfigCommand {
 #[derive(Debug)]
 pub struct WaitCommand {
     pub num_replicas: u32,
-    pub timeout: u32,
+    pub timeout_milliseconds: u32,
 }
 
 impl WaitCommand {
@@ -329,7 +333,7 @@ impl WaitCommand {
         let timeout = extract_bulk_string(input_array, 1, "timeout")?.parse::<u32>()?;
         Ok(WaitCommand {
             num_replicas,
-            timeout,
+            timeout_milliseconds: timeout,
         })
     }
 }
@@ -340,8 +344,10 @@ impl RedisCommand for WaitCommand {
     }
 
     fn execute(&self, _app_context: &AppContext) -> Result<CommandAction> {
-        let integer_response = Integer::new(0_i32);
-        Ok(CommandAction::Response(integer_response.to_bytes()?))
+        Ok(CommandAction::ReplicaHealthCheck {
+            timeout_milliseconds: self.timeout_milliseconds,
+            num_replicas: self.num_replicas,
+        })
     }
 }
 
@@ -518,6 +524,7 @@ fn extract_response(action: CommandAction) -> Vec<u8> {
     match action {
         CommandAction::Response(bytes) => bytes,
         CommandAction::PsyncHandshake { response, .. } => response,
+        _ => unreachable!(),
     }
 }
 
@@ -1172,8 +1179,12 @@ mod tests {
         let result = command.execute(&app_context)?;
 
         match result {
-            CommandAction::Response(response) => {
-                assert_eq!(response, Integer::new(0).to_bytes()?);
+            CommandAction::ReplicaHealthCheck {
+                timeout_milliseconds,
+                num_replicas,
+            } => {
+                assert_eq!(timeout_milliseconds, 100);
+                assert_eq!(num_replicas, 1);
             }
             _ => panic!("Expected CommandAction::Response"),
         }

@@ -281,6 +281,7 @@ fn parse_error(cursor: &mut Cursor<&[u8]>) -> Result<Option<Box<dyn RedisDataTyp
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::CommandAction;
     use crate::context::AppContext;
     use crate::store::DataType;
 
@@ -312,6 +313,7 @@ mod tests {
         match action {
             CommandAction::Response(bytes) => Ok(bytes),
             CommandAction::PsyncHandshake { response, .. } => Ok(response),
+            _ => unreachable!(),
         }
     }
 
@@ -492,8 +494,9 @@ mod tests {
         let app_context = AppContext::default();
         let action = command.unwrap().execute(&app_context)?;
         let response = match action {
-            crate::commands::CommandAction::Response(bytes) => bytes,
-            crate::commands::CommandAction::PsyncHandshake { response, .. } => response,
+            CommandAction::Response(bytes) => bytes,
+            CommandAction::PsyncHandshake { response, .. } => response,
+            _ => unreachable!(),
         };
         assert_eq!(response, b"+PONG\r\n");
 
@@ -583,8 +586,9 @@ mod tests {
         let app_context = AppContext::default();
         let action = command.unwrap().execute(&app_context)?;
         let response = match action {
-            crate::commands::CommandAction::Response(bytes) => bytes,
-            crate::commands::CommandAction::PsyncHandshake { response, .. } => response,
+            CommandAction::Response(bytes) => bytes,
+            CommandAction::PsyncHandshake { response, .. } => response,
+            _ => unreachable!(),
         };
         assert_eq!(response, b"$3\r\nhey\r\n");
 
@@ -1110,8 +1114,9 @@ mod tests {
         let command = result.unwrap();
         let action = command.execute(&AppContext::default())?;
         let response = match action {
-            crate::commands::CommandAction::Response(bytes) => bytes,
-            crate::commands::CommandAction::PsyncHandshake { response, .. } => response,
+            CommandAction::Response(bytes) => bytes,
+            CommandAction::PsyncHandshake { response, .. } => response,
+            _ => unreachable!(),
         };
         assert_eq!(response, b"+OK\r\n");
 
@@ -1128,8 +1133,9 @@ mod tests {
         let command = result.unwrap();
         let action = command.execute(&AppContext::default())?;
         let response = match action {
-            crate::commands::CommandAction::Response(bytes) => bytes,
-            crate::commands::CommandAction::PsyncHandshake { response, .. } => response,
+            CommandAction::Response(bytes) => bytes,
+            CommandAction::PsyncHandshake { response, .. } => response,
+            _ => unreachable!(),
         };
         assert_eq!(response, b"+OK\r\n");
 
@@ -1158,8 +1164,9 @@ mod tests {
         let command = result.unwrap();
         let action = command.execute(&AppContext::default())?;
         let response = match action {
-            crate::commands::CommandAction::Response(bytes) => bytes,
-            crate::commands::CommandAction::PsyncHandshake { response, .. } => response,
+            CommandAction::Response(bytes) => bytes,
+            CommandAction::PsyncHandshake { response, .. } => response,
+            _ => unreachable!(),
         };
         assert_eq!(response, b"+OK\r\n");
 
