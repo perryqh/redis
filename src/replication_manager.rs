@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::net::tcp::OwnedWriteHalf;
@@ -14,6 +15,7 @@ pub struct ReplicationManager {
 #[derive(Debug)]
 struct FollowerConnection {
     id: String,
+    bytes_written: AtomicU64,
     writer: Arc<tokio::sync::Mutex<OwnedWriteHalf>>,
 }
 
@@ -37,6 +39,7 @@ impl ReplicationManager {
         let follower = FollowerConnection {
             id: id.clone(),
             writer: Arc::new(tokio::sync::Mutex::new(writer)),
+            bytes_written: AtomicU64::new(0),
         };
 
         let mut followers = self.followers.write().await;
@@ -62,6 +65,9 @@ impl ReplicationManager {
             if let Ok(mut writer) = follower.writer.try_lock() {
                 if writer.write_all(command_bytes).await.is_ok() && writer.flush().await.is_ok() {
                     success_count += 1;
+                    follower
+                        .bytes_written
+                        .fetch_add(command_bytes.len() as u64, Ordering::Relaxed);
                 }
             }
         }
