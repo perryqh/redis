@@ -3,11 +3,12 @@ use std::io::Cursor;
 use anyhow::Result;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
+use tokio::sync::mpsc;
 
 use crate::commands::CommandAction;
 use crate::context::AppContext;
 use crate::datatypes::{Integer, RedisDataType};
-use crate::resp::parse_command;
+use crate::resp::{parse_command, parse_data_type};
 
 /// Handles a single client connection
 ///
@@ -58,10 +59,11 @@ async fn handle_connection_with_stream(
                     // Register follower and become replication stream
                     if let Some(ref replication_manager) = app_context.replication_manager {
                         let (reader, writer) = socket.into_split();
-                        replication_manager.register_follower(writer).await;
+                        let (follower_id, ack_sender) =
+                            replication_manager.register_follower(writer).await;
 
                         // Keep connection open, reading any follower data
-                        keep_follower_connected(reader).await?;
+                        keep_follower_connected(reader, ack_sender, follower_id).await?;
                     }
                     return Ok(());
                 }
@@ -69,26 +71,16 @@ async fn handle_connection_with_stream(
                     timeout_milliseconds,
                     num_replicas,
                 } => {
-                    let (num_followers, num_zero_byte_sent_followers) =
+                    let acknowledged_count =
                         if let Some(ref replication_manager) = app_context.replication_manager {
-                            (
-                                replication_manager.follower_count().await,
-                                replication_manager
-                                    .number_of_zero_byte_sent_followers()
-                                    .await,
-                            )
+                            replication_manager
+                                .wait_for_replicas(num_replicas, timeout_milliseconds)
+                                .await
                         } else {
-                            (0, 0)
+                            0
                         };
-                    let integer_response = if num_zero_byte_sent_followers >= num_replicas as usize
-                        || num_zero_byte_sent_followers == num_followers
-                    {
-                        Integer::new(num_zero_byte_sent_followers as i32)
-                    } else {
-                        Integer::new(0_i32)
-                    };
-                    dbg!(timeout_milliseconds);
 
+                    let integer_response = Integer::new(acknowledged_count as i32);
                     socket.write_all(&integer_response.to_bytes()?).await?;
                     socket.flush().await?;
                 }
@@ -101,7 +93,12 @@ async fn handle_connection_with_stream(
 }
 
 /// Keeps a follower connection alive by reading until disconnect
-async fn keep_follower_connected<R>(mut reader: R) -> Result<()>
+/// Parses REPLCONF ACK messages and sends offsets through the channel
+async fn keep_follower_connected<R>(
+    mut reader: R,
+    ack_sender: mpsc::UnboundedSender<u64>,
+    follower_id: String,
+) -> Result<()>
 where
     R: AsyncRead + Unpin,
 {
@@ -109,14 +106,47 @@ where
     loop {
         match reader.read(&mut buffer).await {
             Ok(0) => {
-                eprintln!("Follower disconnected");
+                eprintln!("Follower {} disconnected", follower_id);
                 break;
             }
-            Ok(_) => {
-                // Follower sent data, ignore for now
+            Ok(n) => {
+                // Parse REPLCONF ACK responses
+                let mut cursor = Cursor::new(&buffer[..n]);
+                while let Ok(Some(data)) = parse_data_type(&mut cursor) {
+                    // Check if it's a REPLCONF ACK response
+                    if let Some(array) = data.as_any().downcast_ref::<crate::datatypes::Array>() {
+                        if array.values.len() == 3 {
+                            let cmd = array.values[0]
+                                .as_any()
+                                .downcast_ref::<crate::datatypes::BulkString>();
+                            let subcmd = array.values[1]
+                                .as_any()
+                                .downcast_ref::<crate::datatypes::BulkString>();
+                            let offset_bulk = array.values[2]
+                                .as_any()
+                                .downcast_ref::<crate::datatypes::BulkString>();
+
+                            if let (Some(cmd), Some(subcmd), Some(offset_bulk)) =
+                                (cmd, subcmd, offset_bulk)
+                            {
+                                if cmd.value.to_uppercase() == "REPLCONF"
+                                    && subcmd.value.to_uppercase() == "ACK"
+                                {
+                                    if let Ok(offset) = offset_bulk.value.parse::<u64>() {
+                                        eprintln!(
+                                            "Follower {} sent ACK with offset {}",
+                                            follower_id, offset
+                                        );
+                                        let _ = ack_sender.send(offset);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
             Err(e) => {
-                eprintln!("Error reading from follower: {}", e);
+                eprintln!("Error reading from follower {}: {}", follower_id, e);
                 break;
             }
         }
